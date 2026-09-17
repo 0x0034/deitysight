@@ -264,8 +264,16 @@ func (a *Agent) run(id string) {
 			}
 			continue
 		}
-		if !a.waitPoint(deadline) {
+		ready, missed := a.waitPoint(deadline)
+		if !ready {
 			return
+		}
+		if missed {
+			t.MissedPoints++
+			if a.recordError(&t, "sample_missed", offset) != nil {
+				break
+			}
+			continue
 		}
 		sampleID := uuid()
 		bgName := ""
@@ -403,26 +411,30 @@ func (a *Agent) advanceBackground() {
 	}
 }
 
-func (a *Agent) waitPoint(deadline time.Time) bool {
+func (a *Agent) waitPoint(deadline time.Time) (bool, bool) {
 	for {
 		next := deadline
-		if a.cfg.Background.Enabled && a.nextBackground.Before(next) {
+		if a.cfg.Background.Enabled && a.nextBackground.Add(min(a.cfg.Background.Step, a.cfg.Sampling.RoundTimeout)).Before(next) {
 			next = a.nextBackground
 		}
 		timer := time.NewTimer(max(0, time.Until(next)))
 		select {
 		case <-a.ctx.Done():
 			timer.Stop()
-			return false
+			return false, false
 		case <-timer.C:
 		}
 		// A task always wins when both schedules are due.
 		if !time.Now().Before(deadline) {
-			return true
+			return true, false
 		}
 		// Do not start a background round whose budget overlaps the next task point.
 		if time.Until(deadline) > min(a.cfg.Background.Step, a.cfg.Sampling.RoundTimeout) {
 			a.background(true)
+			if !time.Now().Before(deadline) {
+				a.advanceBackground()
+				return true, true
+			}
 		}
 		a.advanceBackground()
 	}

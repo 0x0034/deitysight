@@ -299,6 +299,15 @@ func (s *store) RemoveTask(id string) error {
 		return errors.New("invalid task id")
 	}
 	base := "tasks/" + id
+	s.mu.Lock()
+	for name := range s.leases {
+		if filepath.Dir(name) == base {
+			s.removedDirs[base] = true
+			s.mu.Unlock()
+			return nil
+		}
+	}
+	s.mu.Unlock()
 	entries, e := s.Entries(base)
 	if e != nil {
 		return e
@@ -313,13 +322,11 @@ func (s *store) RemoveTask(id string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for name := range s.leases {
-		if filepath.Dir(name) == base {
-			s.removedDirs[base] = true
-			return nil
-		}
+	e = s.root.Remove(base)
+	if e == nil {
+		delete(s.removedDirs, base)
 	}
-	return s.root.Remove(base)
+	return e
 }
 
 type leasedFile struct {
@@ -335,7 +342,6 @@ func (f *leasedFile) Close() error {
 		err = f.File.Close()
 		s := f.s
 		s.mu.Lock()
-		defer s.mu.Unlock()
 		s.leases[f.name]--
 		if s.leases[f.name] == 0 {
 			delete(s.leases, f.name)
@@ -344,10 +350,14 @@ func (f *leasedFile) Close() error {
 					s.used -= n
 				}
 				delete(s.pending, f.name)
-				base := filepath.Dir(f.name)
-				if s.removedDirs[base] && s.root.Remove(base) == nil {
-					delete(s.removedDirs, base)
-				}
+			}
+		}
+		base := filepath.Dir(f.name)
+		removeDir := s.removedDirs[base]
+		s.mu.Unlock()
+		if removeDir {
+			if e := s.RemoveTask(filepath.Base(base)); err == nil {
+				err = e
 			}
 		}
 	})

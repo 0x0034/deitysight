@@ -173,6 +173,13 @@ func (a *Agent) recover() {
 			continue
 		}
 		b, e := a.store.Read(taskPath(id, "task.json"))
+		if errors.Is(e, os.ErrNotExist) {
+			remaining, readErr := a.store.Entries("tasks/" + id)
+			if readErr == nil && len(remaining) == 0 {
+				_ = a.store.RemoveTask(id)
+				continue
+			}
+		}
 		var t Task
 		if e != nil || json.Unmarshal(b, &t) != nil || !validTask(t, id) {
 			a.degraded = true

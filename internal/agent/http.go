@@ -189,9 +189,22 @@ func (a *Agent) download(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	defer f.Close()
-	info, e := f.Stat()
-	if e != nil || info.Size() != t.Result.Size {
+	n, sum, e := digest(f)
+	if e != nil || n != t.Result.Size || sum != t.Result.SHA256 {
+		a.mu.Lock()
+		current, ok := a.tasks[id]
+		if ok {
+			current.Result.Available = false
+			current.addError("result_corrupt_or_missing")
+			a.tasks[id] = current
+			_ = a.persist(current)
+		}
+		a.mu.Unlock()
 		writeError(w, apiError(409, "result_unavailable", "result integrity check failed"))
+		return
+	}
+	if _, e = f.Seek(0, io.SeekStart); e != nil {
+		writeError(w, apiError(409, "result_unavailable", "cannot read result"))
 		return
 	}
 	w.Header().Set("Content-Type", "application/gzip")
