@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"flag"
 	"os"
 	"os/exec"
 	"syscall"
@@ -31,6 +32,9 @@ func TestProcessControlFilter(t *testing.T) {
 		return
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestProcessControlFilter$")
+	if f := flag.Lookup("test.gocoverdir"); f != nil && f.Value.String() != "" {
+		cmd.Args = append(cmd.Args, "-test.gocoverdir="+f.Value.String())
+	}
 	cmd.Env = append(os.Environ(), "DEITYSIGHT_FILTER_TEST=1")
 	if b, e := cmd.CombinedOutput(); e != nil {
 		t.Fatalf("%v\n%s", e, b)

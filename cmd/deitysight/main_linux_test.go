@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -19,6 +20,9 @@ import (
 func TestCLIEndToEnd(t *testing.T) {
 	if os.Getenv("DEITYSIGHT_CLI_TEST") != "1" {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestCLIEndToEnd$")
+		if f := flag.Lookup("test.gocoverdir"); f != nil && f.Value.String() != "" {
+			cmd.Args = append(cmd.Args, "-test.gocoverdir="+f.Value.String())
+		}
 		cmd.Env = append(os.Environ(), "DEITYSIGHT_CLI_TEST=1")
 		if b, e := cmd.CombinedOutput(); e != nil {
 			t.Fatalf("%v\n%s", e, b)

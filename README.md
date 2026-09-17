@@ -14,7 +14,9 @@ make verify
 /usr/local/bin/deitysight --config /etc/deitysight/agent.yaml
 ```
 
-systemd 模板位于 `deploy/deitysight.service`。修改存储路径时同时调整 `ReadWritePaths` 与 `StateDirectory`；安装单元后执行 `systemctl daemon-reload`、`systemctl enable --now deitysight`。默认使用 0.2 核 CPU 配额、256 MiB 内存上限。模板要求支持相关保护选项的现代 systemd；不能将模板存在等同于在目标内核上验证过隔离能力。
+systemd 模板位于 `deploy/deitysight.service`。修改存储路径时同时调整 `ReadWritePaths` 与 `StateDirectory`；安装单元后执行 `systemctl daemon-reload`、`systemctl enable --now deitysight`。默认使用 0.2 核 CPU 配额、256 MiB 内存上限。已在 systemd 252 测试模板；其他版本需按验证文档检查。
+
+二进制启动时安装作用于所有线程的 seccomp 过滤器，禁止跨进程信号、ptrace、进程内存系统调用及动态探针，保留 Go 运行时的自身线程信号。内核必须支持 seccomp TSYNC，不支持时拒绝启动。文件系统保护由 systemd 模板提供；手动运行不会自动创建只读挂载命名空间。
 
 配置启动时加载。默认监听 `127.0.0.1:19100`，需要远程 server 访问时改为管理网地址。HTTP 使用 Bearer token，按已确认设计不提供 TLS。示例 token 会被启动校验拒绝。
 

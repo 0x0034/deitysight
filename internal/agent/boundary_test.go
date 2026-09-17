@@ -231,7 +231,7 @@ func TestStorageFailureAndPinnedExpiry(t *testing.T) {
 	}
 	c2 := testConfig(t)
 	c2.Storage.ResultRetention = 20 * time.Millisecond
-	c2.Storage.TaskRetention = 100 * time.Millisecond
+	c2.Storage.TaskRetention = time.Second
 	b := openTestAgent(t, c2, fixtureCollector{})
 	task, _, e = b.Submit(Request{RequestID: "lease"})
 	if e != nil {
@@ -242,7 +242,7 @@ func TestStorageFailureAndPinnedExpiry(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(1100 * time.Millisecond)
 	b.cleanup()
 	raw, e := io.ReadAll(lease)
 	if e != nil || len(raw) == 0 {
@@ -393,7 +393,7 @@ func TestDownloadRejectsSameLengthCorruption(t *testing.T) {
 func TestExpiredPinnedTaskRetainsRecoveryMetadata(t *testing.T) {
 	c := testConfig(t)
 	c.Storage.ResultRetention = 10 * time.Millisecond
-	c.Storage.TaskRetention = 30 * time.Millisecond
+	c.Storage.TaskRetention = time.Second
 	a := openTestAgent(t, c, fixtureCollector{})
 	task, _, e := a.Submit(Request{RequestID: "pinned-crash"})
 	if e != nil {
@@ -405,7 +405,7 @@ func TestExpiredPinnedTaskRetainsRecoveryMetadata(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer f.Close()
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(1100 * time.Millisecond)
 	a.cleanup()
 	if _, e = os.Stat(filepath.Join(c.Storage.Path, taskPath(task.TaskID, "task.json"))); e != nil {
 		t.Fatal("metadata removed before pinned data; crash would leave an unrecoverable orphan")
