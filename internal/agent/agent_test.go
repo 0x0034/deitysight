@@ -238,6 +238,19 @@ func TestTaskLifecycleArchiveAndReplay(t *testing.T) {
 	if w.Header().Get("ETag") == "" {
 		t.Fatal("no digest")
 	}
+	var manifest struct {
+		Sources []struct {
+			Source  string `json:"source"`
+			Records int64  `json:"records"`
+		} `json:"sources"`
+		Semantics map[string]string `json:"source_semantics"`
+	}
+	if err := json.Unmarshal(files["manifest.json"], &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Sources) != 1 || manifest.Sources[0].Source != "/proc/stat" || manifest.Sources[0].Records != 2 || manifest.Semantics["diskstats"] == "" {
+		t.Fatal("manifest lacks source coverage or units")
+	}
 	a.Close()
 	c.Sampling.DefaultWindow = 2 * time.Second
 	b := openTestAgent(t, c, fixtureCollector{})
