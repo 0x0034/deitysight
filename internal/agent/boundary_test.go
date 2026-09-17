@@ -296,3 +296,74 @@ func TestTerminalArtifactCorruptionPreservesState(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 }
+
+func TestAuxiliarySourcesCannotLeakSymlinkContent(t *testing.T) {
+	root := t.TempDir()
+	processFixture(t, root)
+	// Root confinement alone still allows symlinks to other files inside proc root.
+	fixtureWrite(t, root, "42/environ", []byte("FORBIDDEN_AUXILIARY_SECRET"))
+	if e := os.Remove(filepath.Join(root, "42/cgroup")); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.Symlink("environ", filepath.Join(root, "42/cgroup")); e != nil {
+		t.Fatal(e)
+	}
+	col, e := NewLinuxCollector(root, 256)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer col.Close()
+	var records []Record
+	if e = col.Collect(context.Background(), func(r Record) error { records = append(records, r); return nil }); e != nil {
+		t.Fatal(e)
+	}
+	raw, _ := json.Marshal(records)
+	if bytes.Contains(raw, []byte("FORBIDDEN_AUXILIARY_SECRET")) {
+		t.Fatal("auxiliary identity read leaked a forbidden source")
+	}
+}
+
+func TestThreadCgroupsAreCollected(t *testing.T) {
+	root := t.TempDir()
+	cg := t.TempDir()
+	processFixture(t, root)
+	fixtureWrite(t, root, "42/task/42/cgroup", []byte("0::/other\n"))
+	fixtureWrite(t, root, "self/mountinfo", []byte(fmt.Sprintf("29 1 0:26 / %s rw - cgroup2 cgroup rw\n", cg)))
+	fixtureWrite(t, cg, "other/cpu.stat", []byte("usage_usec 123\n"))
+	col, e := NewLinuxCollector(root, 1024)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer col.Close()
+	found := false
+	if e = col.Collect(context.Background(), func(r Record) error {
+		if r.Source == filepath.Join(cg, "other/cpu.stat") && r.Content == "usage_usec 123\n" {
+			found = true
+		}
+		return nil
+	}); e != nil {
+		t.Fatal(e)
+	}
+	if !found {
+		t.Fatal("thread-specific cgroup omitted")
+	}
+}
+
+func TestSinkPermissionErrorIsNotASourceError(t *testing.T) {
+	root := t.TempDir()
+	processFixture(t, root)
+	col, e := NewLinuxCollector(root, 1024)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer col.Close()
+	e = col.Collect(context.Background(), func(r Record) error {
+		if r.Scope == "thread" {
+			return os.ErrPermission
+		}
+		return nil
+	})
+	if !errors.Is(e, os.ErrPermission) {
+		t.Fatal("sink failure swallowed as thread enumeration failure")
+	}
+}
