@@ -10,6 +10,9 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -18,6 +21,67 @@ type fileDigest struct {
 	Name   string `json:"name"`
 	Size   int64  `json:"size"`
 	SHA256 string `json:"sha256"`
+}
+
+type sourceCoverage struct {
+	Source   string `json:"source"`
+	Records  int64  `json:"records"`
+	Complete int64  `json:"complete_records"`
+	Missing  int64  `json:"incomplete_records"`
+}
+
+func sourcePattern(r Record) string {
+	if r.Scope == "cgroup" {
+		return "<cgroup>/" + path.Base(r.Source)
+	}
+	parts := strings.Split(r.Source, "/")
+	if len(parts) > 2 && parts[1] == "proc" {
+		if _, e := strconv.Atoi(parts[2]); e == nil {
+			parts[2] = "<pid>"
+			if len(parts) > 4 && parts[3] == "task" {
+				parts[4] = "<tid>"
+			}
+			return strings.Join(parts, "/")
+		}
+	}
+	return r.Source
+}
+func (a *Agent) coverage(base string, names []string) ([]sourceCoverage, error) {
+	counts := map[string]*sourceCoverage{}
+	for _, name := range names {
+		if name == "errors.jsonl" {
+			continue
+		}
+		f, e := a.store.Open(base + name)
+		if e != nil {
+			return nil, e
+		}
+		e = readRecords(f, 16<<20, func(r Record) error {
+			key := sourcePattern(r)
+			v := counts[key]
+			if v == nil {
+				v = &sourceCoverage{Source: key}
+				counts[key] = v
+			}
+			v.Records++
+			if r.Complete {
+				v.Complete++
+			} else {
+				v.Missing++
+			}
+			return nil
+		})
+		f.Close()
+		if e != nil {
+			return nil, e
+		}
+	}
+	out := make([]sourceCoverage, 0, len(counts))
+	for _, v := range counts {
+		out = append(out, *v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Source < out[j].Source })
+	return out, nil
 }
 
 func digest(f io.Reader) (int64, string, error) {
@@ -64,14 +128,21 @@ func (a *Agent) archive(t *Task) error {
 	}
 	snapshot := t.clone()
 	snapshot.Result = Result{}
+	sources, e := a.coverage(base, names)
+	if e != nil {
+		return e
+	}
 	manifest, e := jsonBytes(map[string]any{
 		"schema_version": 1, "agent_version": Version, "agent_id": a.id, "host": t.Host, "task": snapshot, "files": files,
+		"sources": sources,
 		"source_semantics": map[string]string{
 			"proc_stat":    "CPU counters use clock_ticks; process stat is thread-group aggregate; task stat is per-thread. Do not add process and thread counters. [PT] fields can be zeroed by ptrace access checks.",
 			"memory":       "proc status Vm* uses kB; stat RSS uses page_size. Threads share an address space: memory is not additive across threads.",
 			"io":           "rchar/wchar count syscall bytes, not storage bytes. read_bytes/write_bytes are storage accounting; process io may include waited-for children and thread-group totals.",
+			"diskstats":    "Sector counters use 512-byte sectors; time counters use milliseconds. Device-level accounting cannot establish per-process causality.",
+			"pressure":     "PSI avg10/avg60/avg300 are percentages; total is microseconds. Fields and full-stall support vary by kernel.",
 			"wchan":        "Zero is ambiguous: running state, hidden symbol or denied visibility; it does not prove absence of waiting.",
-			"cgroup":       "Raw units are source-defined: v2 cpu.stat usec, cpu.max quota/period usec, memory bytes, io.stat bytes and operation counts; v1 cpuacct.usage ns, cpuacct.stat clock ticks. Ancestors are visible limits only.",
+			"cgroup":       "Raw units are source-defined: v2 cpu.stat usec, cpu.max quota/period usec, memory bytes, io.stat bytes and operation counts; v1 cpuacct.usage ns, cpuacct.stat clock ticks. Ancestors are visible limits only. Hierarchical counters include descendants: do not add parent/child counters or cgroup/process totals.",
 			"identity":     "Correlate agent_id, boot_id, PID, start_time_ticks and TID/thread_start_time_ticks. identity_unstable invalidates this sample's affected object records.",
 			"completeness": "Only visible objects are enumerable. Missing, timeout, truncated and unstable sources are explicit errors. No Top N, ranking, derived load diagnosis or model call.",
 		},
@@ -269,7 +340,7 @@ func (a *Agent) repair(t *Task, name string) error {
 	}
 	defer a.store.Remove(tmp)
 	scan := bufio.NewScanner(f)
-	scan.Buffer(make([]byte, 64<<10), int(6*a.cfg.Sampling.MaxSourceBytes+(64<<10)))
+	scan.Buffer(make([]byte, 64<<10), int(6*(16<<20)+(64<<10)))
 	damaged := false
 	var sources int64
 	sampleIDs := map[string]bool{}

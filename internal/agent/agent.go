@@ -526,7 +526,7 @@ func (a *Agent) freezeHistory(t *Task) error {
 		if err != nil {
 			return err
 		}
-		err = readRecords(f, a.cfg.Sampling.MaxSourceBytes, func(r Record) error {
+		err = readRecords(f, 16<<20, func(r Record) error {
 			b, e := jsonBytes(r)
 			if e != nil {
 				return e
