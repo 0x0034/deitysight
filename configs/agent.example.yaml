@@ -1,0 +1,21 @@
+http:
+  listen: "127.0.0.1:19100"
+  token: "REPLACE_WITH_DEPLOYMENT_SECRET"
+storage:
+  path: "/var/lib/deitysight"
+  result_retention: "24h"
+  task_retention: "168h"
+  max_bytes: 1073741824
+  min_free_bytes: 1073741824
+background:
+  enabled: false
+  step: "30s"
+  retention: "10m"
+sampling:
+  default_window: "30s"
+  default_step: "5s"
+  max_window: "300s"
+  min_step: "1s"
+  max_points: 301
+  round_timeout: "2s"
+  max_source_bytes: 1048576

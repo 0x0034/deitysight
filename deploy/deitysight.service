@@ -1,0 +1,53 @@
+[Unit]
+Description=Deitysight read-only Linux collection agent
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/deitysight --config /etc/deitysight/agent.yaml
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+UMask=0077
+StateDirectory=deitysight
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/deitysight
+ProtectSystem=strict
+ProtectHome=read-only
+# ProtectSystem does not make proc/sys/dev read-only by itself.
+ReadOnlyPaths=/proc /sys
+PrivateDevices=yes
+PrivateTmp=no
+ProcSubset=all
+ProtectProc=default
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# ptrace visibility checks need this capability; actual attach/read/write syscalls are denied.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+SystemCallFilter=~@mount @reboot @swap @module @raw-io @obsolete @debug @keyring
+SystemCallFilter=~kill tkill pidfd_send_signal process_vm_readv process_vm_writev process_madvise
+SystemCallFilter=~bpf perf_event_open kexec_load kexec_file_load open_by_handle_at
+SystemCallErrorNumber=EPERM
+# tgkill is required by the Go runtime for self-directed preemption signals.
+CPUQuota=20%
+MemoryMax=256M
+TasksMax=64
+LimitNOFILE=1024
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

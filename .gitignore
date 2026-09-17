@@ -1,0 +1,6 @@
+/dist/
+/coverage.out
+/agent.yaml
+*.test
+.env
+.DS_Store
