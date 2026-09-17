@@ -137,6 +137,9 @@ func TestDuplicateRequestMetadataBlocksAdmission(t *testing.T) {
 	if _, _, e = d.Submit(Request{RequestID: "different"}); e == nil {
 		t.Fatal("conflicting recovery accepted new work")
 	}
+	if _, _, e = d.Submit(Request{RequestID: "duplicate"}); e == nil {
+		t.Fatal("ambiguous duplicate request was replayed")
+	}
 	if _, e = d.Get(task.TaskID); e != nil {
 		t.Fatal("valid existing task unavailable")
 	}
