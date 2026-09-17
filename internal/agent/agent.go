@@ -16,22 +16,23 @@ import (
 
 // Agent owns admission and durable task state. Only worker invokes the collector.
 type Agent struct {
-	cfg           Config
-	collector     Collector
-	store         *store
-	id            string
-	mu            sync.Mutex
-	tasks         map[string]Task
-	requests      map[string]string
-	active        string
-	degraded      bool
-	paused        bool
-	roundDeadline time.Time
-	ctx           context.Context
-	cancel        context.CancelFunc
-	jobs          chan string
-	wg            sync.WaitGroup
-	once          sync.Once
+	cfg            Config
+	collector      Collector
+	store          *store
+	id             string
+	mu             sync.Mutex
+	tasks          map[string]Task
+	requests       map[string]string
+	active         string
+	degraded       bool
+	paused         bool
+	roundDeadline  time.Time
+	ctx            context.Context
+	cancel         context.CancelFunc
+	jobs           chan string
+	wg             sync.WaitGroup
+	once           sync.Once
+	nextBackground time.Time // worker-owned fixed background schedule
 }
 
 func New(c Config, collector Collector) (*Agent, error) {
@@ -158,6 +159,7 @@ func (a *Agent) Submit(r Request) (Task, bool, error) {
 		return Task{}, false, apiError(507, "storage_unavailable", "storage unavailable")
 	}
 	t := Task{TaskID: uuid(), RequestID: r.RequestID, State: "running", Phase: "sampling", WindowSeconds: int64(w / time.Second), StepSeconds: int64(s / time.Second), PlannedPoints: len(Schedule(w, s)), ReceivedAt: time.Now().UTC(), BackgroundEnabled: a.cfg.Background.Enabled, Errors: []ErrorCount{}}
+	t.Host = a.collector.Metadata()
 	if err := a.store.Mkdir("tasks/" + t.TaskID); err != nil {
 		return Task{}, false, apiError(507, "storage_unavailable", "storage unavailable")
 	}
@@ -174,6 +176,7 @@ func (a *Agent) Submit(r Request) (Task, bool, error) {
 
 func (a *Agent) worker() {
 	defer a.wg.Done()
+	a.nextBackground = time.Now().Add(a.cfg.Background.Step)
 	bg := time.NewTicker(a.cfg.Background.Step)
 	defer bg.Stop()
 	cleanup := time.NewTicker(60 * time.Second)
@@ -194,7 +197,10 @@ func (a *Agent) worker() {
 		case id := <-a.jobs:
 			a.run(id)
 		case <-bg.C:
-			a.background()
+			if !time.Now().Before(a.nextBackground) {
+				a.background(false)
+				a.advanceBackground()
+			}
 		case <-cleanup.C:
 			a.cleanup()
 		}
@@ -207,7 +213,8 @@ func (a *Agent) collect(step time.Duration, emit func(Record) error) error {
 	a.mu.Lock()
 	a.roundDeadline = time.Now().Add(timeout)
 	a.mu.Unlock()
-	err := a.collector.Collect(ctx, emit)
+	boot, _ := a.collector.Metadata()["boot_id"].(string)
+	err := a.collector.Collect(ctx, func(r Record) error { r.BootID = boot; return emit(r) })
 	if err == nil {
 		err = ctx.Err()
 	}
@@ -257,14 +264,15 @@ func (a *Agent) run(id string) {
 			}
 			continue
 		}
-		timer := time.NewTimer(max(0, time.Until(deadline)))
-		select {
-		case <-a.ctx.Done():
-			timer.Stop()
+		if !a.waitPoint(deadline) {
 			return
-		case <-timer.C:
 		}
 		sampleID := uuid()
+		bgName := ""
+		if a.cfg.Background.Enabled && !time.Now().Before(a.nextBackground) {
+			bgName = "background/" + sampleID + ".tmp"
+			a.advanceBackground()
+		}
 		err := a.collect(step, func(r Record) error {
 			r.SchemaVersion = 1
 			r.SampleID = sampleID
@@ -285,6 +293,11 @@ func (a *Agent) run(id string) {
 			if r.Kind == "source" {
 				t.SourceRecords++
 			}
+			if bgName != "" {
+				if e = a.store.Append(bgName, b, false, false); e != nil {
+					return fmt.Errorf("%w: %v", errStorage, e)
+				}
+			}
 			if !r.Complete && r.Code != "not_applicable" {
 				t.addError(r.Code)
 				if e = a.store.Append(taskPath(id, "errors.jsonl"), b, true, false); e != nil {
@@ -293,6 +306,12 @@ func (a *Agent) run(id string) {
 			}
 			return nil
 		})
+		if bgName != "" {
+			if err == nil && a.store.Sync(bgName) == nil {
+				_ = a.store.Publish(bgName, strings.TrimSuffix(bgName, ".tmp")+".jsonl")
+			}
+			_ = a.store.Remove(bgName)
+		}
 		if a.ctx.Err() != nil {
 			return
 		}
@@ -378,12 +397,43 @@ func (a *Agent) finish(t *Task) {
 	}
 }
 
-func (a *Agent) background() {
+func (a *Agent) advanceBackground() {
+	for !a.nextBackground.After(time.Now()) {
+		a.nextBackground = a.nextBackground.Add(a.cfg.Background.Step)
+	}
+}
+
+func (a *Agent) waitPoint(deadline time.Time) bool {
+	for {
+		next := deadline
+		if a.cfg.Background.Enabled && a.nextBackground.Before(next) {
+			next = a.nextBackground
+		}
+		timer := time.NewTimer(max(0, time.Until(next)))
+		select {
+		case <-a.ctx.Done():
+			timer.Stop()
+			return false
+		case <-timer.C:
+		}
+		// A task always wins when both schedules are due.
+		if !time.Now().Before(deadline) {
+			return true
+		}
+		// Do not start a background round whose budget overlaps the next task point.
+		if time.Until(deadline) > min(a.cfg.Background.Step, a.cfg.Sampling.RoundTimeout) {
+			a.background(true)
+		}
+		a.advanceBackground()
+	}
+}
+
+func (a *Agent) background(duringTask bool) {
 	if !a.cfg.Background.Enabled || a.ctx.Err() != nil {
 		return
 	}
 	a.mu.Lock()
-	busy := a.active != "" || a.degraded
+	busy := (a.active != "" && !duringTask) || a.degraded
 	a.mu.Unlock()
 	if busy {
 		return

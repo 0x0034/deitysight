@@ -369,7 +369,7 @@ func (c *LinuxCollector) collectCgroups(ctx context.Context, data []byte, ms []c
 									continue
 								}
 							}
-							if _, e := c.read(root, p, filepath.Join(m.dir, p), "cgroup", &Object{Cgroup: cg}, emit); e != nil {
+							if _, e := c.read(root, p, filepath.Join(m.dir, p), "cgroup", &Object{Cgroup: path.Join(m.root, rel)}, emit); e != nil {
 								return e
 							}
 						}

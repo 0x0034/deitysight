@@ -65,7 +65,7 @@ func (a *Agent) archive(t *Task) error {
 	snapshot := t.clone()
 	snapshot.Result = Result{}
 	manifest, e := jsonBytes(map[string]any{
-		"schema_version": 1, "agent_version": Version, "agent_id": a.id, "host": a.collector.Metadata(), "task": snapshot, "files": files,
+		"schema_version": 1, "agent_version": Version, "agent_id": a.id, "host": t.Host, "task": snapshot, "files": files,
 		"source_semantics": map[string]string{
 			"proc_stat":    "CPU counters use clock_ticks; process stat is thread-group aggregate; task stat is per-thread. Do not add process and thread counters. [PT] fields can be zeroed by ptrace access checks.",
 			"memory":       "proc status Vm* uses kB; stat RSS uses page_size. Threads share an address space: memory is not additive across threads.",

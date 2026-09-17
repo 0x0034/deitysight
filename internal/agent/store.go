@@ -16,15 +16,16 @@ var errStorage = errors.New("storage budget exceeded or storage unavailable")
 const metadataReserve int64 = 64 << 10
 
 type store struct {
-	mu      sync.Mutex
-	root    *os.Root
-	lock    *os.File
-	cfg     StorageConfig
-	used    int64
-	reserve int64
-	leases  map[string]int
-	pending map[string]int64
-	closed  bool
+	mu          sync.Mutex
+	root        *os.Root
+	lock        *os.File
+	cfg         StorageConfig
+	used        int64
+	reserve     int64
+	leases      map[string]int
+	pending     map[string]int64
+	removedDirs map[string]bool
+	closed      bool
 }
 
 func openStore(c StorageConfig) (*store, error) {
@@ -53,7 +54,7 @@ func openStore(c StorageConfig) (*store, error) {
 		lock.Close()
 		return fail(errors.New("storage directory already locked"))
 	}
-	s := &store{root: root, lock: lock, cfg: c, leases: map[string]int{}, pending: map[string]int64{}}
+	s := &store{root: root, lock: lock, cfg: c, leases: map[string]int{}, pending: map[string]int64{}, removedDirs: map[string]bool{}}
 	if e = root.MkdirAll("tasks", 0700); e == nil {
 		e = root.MkdirAll("background", 0700)
 	}
@@ -314,6 +315,7 @@ func (s *store) RemoveTask(id string) error {
 	defer s.mu.Unlock()
 	for name := range s.leases {
 		if filepath.Dir(name) == base {
+			s.removedDirs[base] = true
 			return nil
 		}
 	}
@@ -342,6 +344,10 @@ func (f *leasedFile) Close() error {
 					s.used -= n
 				}
 				delete(s.pending, f.name)
+				base := filepath.Dir(f.name)
+				if s.removedDirs[base] && s.root.Remove(base) == nil {
+					delete(s.removedDirs, base)
+				}
 			}
 		}
 	})
