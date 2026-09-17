@@ -367,3 +367,73 @@ func TestSinkPermissionErrorIsNotASourceError(t *testing.T) {
 		t.Fatal("sink failure swallowed as thread enumeration failure")
 	}
 }
+
+func TestDownloadRejectsSameLengthCorruption(t *testing.T) {
+	c := testConfig(t)
+	a := openTestAgent(t, c, fixtureCollector{})
+	task, _, e := a.Submit(Request{RequestID: "live-corrupt"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	terminal(t, a, task.TaskID)
+	p := filepath.Join(c.Storage.Path, taskPath(task.TaskID, "result.tar.gz"))
+	b, e := os.ReadFile(p)
+	if e != nil {
+		t.Fatal(e)
+	}
+	b[len(b)/2] ^= 0xff
+	if e = os.WriteFile(p, b, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if w := request(t, a, "GET", "/v1/tasks/"+task.TaskID+"/result", "", c.HTTP.Token); w.Code != 409 {
+		t.Fatal("corrupt result served")
+	}
+}
+
+func TestExpiredPinnedTaskRetainsRecoveryMetadata(t *testing.T) {
+	c := testConfig(t)
+	c.Storage.ResultRetention = 10 * time.Millisecond
+	c.Storage.TaskRetention = 30 * time.Millisecond
+	a := openTestAgent(t, c, fixtureCollector{})
+	task, _, e := a.Submit(Request{RequestID: "pinned-crash"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	terminal(t, a, task.TaskID)
+	f, e := a.store.Lease(taskPath(task.TaskID, "result.tar.gz"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer f.Close()
+	time.Sleep(40 * time.Millisecond)
+	a.cleanup()
+	if _, e = os.Stat(filepath.Join(c.Storage.Path, taskPath(task.TaskID, "task.json"))); e != nil {
+		t.Fatal("metadata removed before pinned data; crash would leave an unrecoverable orphan")
+	}
+}
+
+func TestBackgroundMustNotExtendTaskWindow(t *testing.T) {
+	c := testConfig(t)
+	c.Background.Enabled = true
+	c.Background.Step = 100 * time.Millisecond
+	c.Sampling.RoundTimeout = 20 * time.Millisecond
+	a := openTestAgent(t, c, &secondSlowCollector{})
+	task, _, e := a.Submit(Request{RequestID: "background-stall"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	got := terminal(t, a, task.TaskID)
+	if got.MissedPoints != 1 || got.SampledPoints != 1 {
+		t.Fatalf("late background caused task window extension: %+v", got)
+	}
+}
+
+type secondSlowCollector struct{ calls atomic.Int32 }
+
+func (f *secondSlowCollector) Metadata() map[string]any { return map[string]any{} }
+func (f *secondSlowCollector) Collect(ctx context.Context, emit func(Record) error) error {
+	if f.calls.Add(1) == 2 {
+		time.Sleep(1100 * time.Millisecond)
+	}
+	return emit(Record{Kind: "source", Source: "/proc/stat", Content: "cpu 1", Complete: true})
+}
