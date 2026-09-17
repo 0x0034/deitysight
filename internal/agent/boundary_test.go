@@ -437,3 +437,52 @@ func (f *secondSlowCollector) Collect(ctx context.Context, emit func(Record) err
 	}
 	return emit(Record{Kind: "source", Source: "/proc/stat", Content: "cpu 1", Complete: true})
 }
+
+func TestCgroupMissingMountIsExplicit(t *testing.T) {
+	root := t.TempDir()
+	processFixture(t, root)
+	c, e := NewLinuxCollector(root, 1024)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer c.Close()
+	found := false
+	if e = c.Collect(context.Background(), func(r Record) error {
+		if r.Code == "cgroup_not_visible" {
+			found = true
+		}
+		return nil
+	}); e != nil {
+		t.Fatal(e)
+	}
+	if !found {
+		t.Fatal("missing cgroup mount silently omitted")
+	}
+}
+
+func TestRootCgroupMissingStatIsNotNotApplicable(t *testing.T) {
+	root := t.TempDir()
+	cg := t.TempDir()
+	processFixture(t, root)
+	fixtureWrite(t, root, "self/mountinfo", []byte(fmt.Sprintf("29 1 0:26 / %s rw - cgroup2 cgroup rw\n", cg)))
+	c, e := NewLinuxCollector(root, 1024)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer c.Close()
+	found := false
+	if e = c.Collect(context.Background(), func(r Record) error {
+		if r.Source == filepath.Join(cg, "cpu.stat") {
+			found = true
+			if r.Code == "not_applicable" || r.Complete {
+				t.Error("missing accounting source hidden as not applicable")
+			}
+		}
+		return nil
+	}); e != nil {
+		t.Fatal(e)
+	}
+	if !found {
+		t.Fatal("missing source not reported")
+	}
+}
