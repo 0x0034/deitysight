@@ -7,7 +7,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -39,13 +38,13 @@ func NewLinuxCollector(procPath string, limit int64) (*LinuxCollector, error) {
 	}
 	c := &LinuxCollector{proc: r, limit: limit, meta: map[string]any{"architecture": runtime.GOARCH, "page_size": os.Getpagesize(), "logical_cpus": runtime.NumCPU(), "clock_ticks": nil}}
 	for key, p := range map[string]string{"boot_id": "sys/kernel/random/boot_id", "kernel_version": "sys/kernel/osrelease", "hostname": "sys/kernel/hostname"} {
-		if b, e := r.ReadFile(p); e == nil {
+		if b, e := c.auxiliary(r, p); e == nil {
 			c.meta[key] = strings.TrimSpace(string(b))
 		} else {
 			c.meta[key] = nil
 		}
 	}
-	if b, e := r.ReadFile("self/auxv"); e == nil && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
+	if b, e := c.auxiliary(r, "self/auxv"); e == nil && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
 		for len(b) >= 16 {
 			tag, val := binary.LittleEndian.Uint64(b[:8]), binary.LittleEndian.Uint64(b[8:16])
 			if tag == 17 {
@@ -67,6 +66,8 @@ func (c *LinuxCollector) Metadata() map[string]any {
 }
 func sourceCode(e error) string {
 	switch {
+	case errors.Is(e, errTruncated):
+		return "source_truncated"
 	case errors.Is(e, os.ErrPermission):
 		return "permission_denied"
 	case errors.Is(e, os.ErrNotExist):
@@ -76,6 +77,29 @@ func sourceCode(e error) string {
 	default:
 		return "read_failed"
 	}
+}
+
+var errTruncated = errors.New("source truncated")
+
+// Auxiliary identity/location reads obey the same byte and symlink boundaries as emitted sources.
+func (c *LinuxCollector) auxiliary(r *os.Root, name string) ([]byte, error) {
+	i, e := r.Lstat(name)
+	if e != nil {
+		return nil, e
+	}
+	if !i.Mode().IsRegular() {
+		return nil, errors.New("non-regular source")
+	}
+	f, e := r.Open(name)
+	if e != nil {
+		return nil, e
+	}
+	defer f.Close()
+	b, e := io.ReadAll(io.LimitReader(f, c.limit+1))
+	if int64(len(b)) > c.limit {
+		return nil, errTruncated
+	}
+	return b, e
 }
 func (c *LinuxCollector) read(r *os.Root, name, source, scope string, obj *Object, emit func(Record) error) ([]byte, error) {
 	rec := Record{Kind: "source", Source: source, Scope: scope, StartedAt: time.Now().UTC(), Object: obj, Encoding: "utf8", Complete: true}
@@ -162,10 +186,13 @@ func mounts(b []byte) []cgMount {
 	}
 	return out
 }
+
+type enumerationError struct{ error }
+
 func walkEntries(ctx context.Context, r *os.Root, name string, fn func(os.DirEntry) error) error {
 	d, e := r.Open(name)
 	if e != nil {
-		return e
+		return &enumerationError{e}
 	}
 	defer d.Close()
 	for {
@@ -182,7 +209,7 @@ func walkEntries(ctx context.Context, r *os.Root, name string, fn func(os.DirEnt
 			return nil
 		}
 		if e != nil {
-			return e
+			return &enumerationError{e}
 		}
 	}
 }
@@ -212,7 +239,7 @@ func (c *LinuxCollector) Collect(ctx context.Context, emit func(Record) error) e
 			return emit(Record{Kind: "error", Source: "/proc/" + entry.Name(), Code: "process_disappeared"})
 		}
 		defer dir.Close()
-		initial, e := dir.ReadFile("stat")
+		initial, e := c.auxiliary(dir, "stat")
 		if e != nil {
 			return emit(Record{Kind: "error", Source: "/proc/" + entry.Name() + "/stat", Code: sourceCode(e)})
 		}
@@ -221,7 +248,7 @@ func (c *LinuxCollector) Collect(ctx context.Context, emit func(Record) error) e
 			return emit(Record{Kind: "error", Source: "/proc/" + entry.Name() + "/stat", Code: "invalid_identity"})
 		}
 		obj := &Object{PID: pid, StartTime: started}
-		cg, e := dir.ReadFile("cgroup")
+		cg, e := c.auxiliary(dir, "cgroup")
 		if e == nil {
 			obj.Cgroup = strings.TrimSpace(string(cg))
 			if m := containerPattern.FindSubmatch(cg); m != nil {
@@ -246,7 +273,7 @@ func (c *LinuxCollector) Collect(ctx context.Context, emit func(Record) error) e
 				return emit(Record{Kind: "error", Source: "/proc/" + entry.Name() + "/task/" + thread.Name(), Code: "thread_disappeared"})
 			}
 			defer td.Close()
-			b, e := td.ReadFile("stat")
+			b, e := c.auxiliary(td, "stat")
 			if e != nil {
 				return emit(Record{Kind: "error", Source: "/proc/" + entry.Name() + "/task/" + thread.Name() + "/stat", Code: sourceCode(e)})
 			}
@@ -257,6 +284,12 @@ func (c *LinuxCollector) Collect(ctx context.Context, emit func(Record) error) e
 			to := *obj
 			to.TID = tid
 			to.ThreadStartTime = ts
+			tcg, _ := c.auxiliary(td, "cgroup")
+			to.Cgroup = strings.TrimSpace(string(tcg))
+			to.ContainerID = ""
+			if m := containerPattern.FindSubmatch(tcg); m != nil {
+				to.ContainerID = string(m[1])
+			}
 			for _, name := range objectSources {
 				if e := ctx.Err(); e != nil {
 					return e
@@ -265,14 +298,15 @@ func (c *LinuxCollector) Collect(ctx context.Context, emit func(Record) error) e
 					return e
 				}
 			}
-			b, e = td.ReadFile("stat")
+			b, e = c.auxiliary(td, "stat")
 			if e != nil || startTime(b) != ts {
 				return emit(Record{Kind: "error", Source: "/proc/" + entry.Name() + "/task/" + thread.Name(), Object: &to, Code: "identity_unstable"})
 			}
-			return nil
+			return c.collectCgroups(ctx, tcg, ms, seen, emit)
 		})
 		if e != nil {
-			if errors.Is(e, fs.ErrNotExist) || errors.Is(e, fs.ErrPermission) {
+			var enumeration *enumerationError
+			if errors.As(e, &enumeration) {
 				if e = emit(Record{Kind: "error", Source: "/proc/" + entry.Name() + "/task", Code: "thread_enumeration_failed"}); e != nil {
 					return e
 				}
@@ -280,7 +314,7 @@ func (c *LinuxCollector) Collect(ctx context.Context, emit func(Record) error) e
 				return e
 			}
 		}
-		final, e := dir.ReadFile("stat")
+		final, e := c.auxiliary(dir, "stat")
 		if e != nil || startTime(final) != started {
 			if e = emit(Record{Kind: "error", Source: "/proc/" + entry.Name(), Object: obj, Code: "identity_unstable"}); e != nil {
 				return e
