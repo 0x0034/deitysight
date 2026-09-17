@@ -232,6 +232,7 @@ func validTask(t Task, id string) bool {
 	}
 }
 func (a *Agent) recover() {
+	ambiguous := map[string]bool{}
 	entries, err := a.store.Entries("tasks")
 	if err != nil {
 		a.degraded = true
@@ -262,7 +263,9 @@ func (a *Agent) recover() {
 		}
 		if prev, ok := a.requests[t.RequestID]; ok && prev != id {
 			a.degraded = true
-		} else {
+			ambiguous[t.RequestID] = true
+			delete(a.requests, t.RequestID)
+		} else if !ambiguous[t.RequestID] {
 			a.requests[t.RequestID] = id
 		}
 	}
