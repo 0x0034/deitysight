@@ -336,6 +336,7 @@ func (c *LinuxCollector) collectCgroups(ctx context.Context, data []byte, ms []c
 			}
 			continue
 		}
+		matched := false
 		for _, m := range ms {
 			if (m.kind == "cgroup2") != (parts[0] == "0" && parts[1] == "") {
 				continue
@@ -364,6 +365,7 @@ func (c *LinuxCollector) collectCgroups(ctx context.Context, data []byte, ms []c
 			if rel == "" {
 				rel = "."
 			}
+			matched = true
 			root, e := os.OpenRoot(m.dir)
 			if e != nil {
 				if e = emit(Record{Kind: "error", Source: m.dir, Code: sourceCode(e)}); e != nil {
@@ -395,7 +397,7 @@ func (c *LinuxCollector) collectCgroups(ctx context.Context, data []byte, ms []c
 								return e
 							}
 							p := path.Join(rel, name)
-							if rel == "." && m.kind == "cgroup2" {
+							if rel == "." && m.root == "/" && m.kind == "cgroup2" && rootOnlyNotApplicable(name) {
 								if _, e := root.Stat(p); errors.Is(e, os.ErrNotExist) {
 									if e = emit(Record{Kind: "capability", Source: filepath.Join(m.dir, p), Scope: "cgroup", Code: "not_applicable", Complete: true}); e != nil {
 										return e
@@ -418,6 +420,21 @@ func (c *LinuxCollector) collectCgroups(ctx context.Context, data []byte, ms []c
 				return e
 			}
 		}
+		if !matched && !seen["invisible:"+line] {
+			seen["invisible:"+line] = true
+			if e := emit(Record{Kind: "error", Source: "cgroup", Scope: "cgroup", Object: &Object{Cgroup: cg}, Code: "cgroup_not_visible"}); e != nil {
+				return e
+			}
+		}
 	}
 	return nil
+}
+
+func rootOnlyNotApplicable(name string) bool {
+	switch name {
+	case "cpu.max", "cpu.weight", "memory.current", "memory.max", "memory.high", "memory.events", "io.max", "cgroup.events":
+		return true
+	default:
+		return false
+	}
 }
