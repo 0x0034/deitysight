@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/0x0034/deitysight/internal/agent"
+	"github.com/0x0034/deitysight/internal/sandbox"
 )
 
 func main() {
@@ -38,6 +39,9 @@ func run() error {
 	}
 	cfg, err := agent.LoadConfig(*config)
 	if err != nil {
+		return err
+	}
+	if err := sandbox.RestrictProcessControl(); err != nil {
 		return err
 	}
 	collector, err := agent.NewLinuxCollector("/proc", cfg.Sampling.MaxSourceBytes)

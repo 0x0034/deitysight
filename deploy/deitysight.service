@@ -41,7 +41,7 @@ SystemCallFilter=~@mount @reboot @swap @module @raw-io @obsolete @debug @keyring
 SystemCallFilter=~kill tkill pidfd_send_signal process_vm_readv process_vm_writev process_madvise
 SystemCallFilter=~bpf perf_event_open kexec_load kexec_file_load open_by_handle_at
 SystemCallErrorNumber=EPERM
-# tgkill is required by the Go runtime for self-directed preemption signals.
+# The binary's TSYNC seccomp filter allows tgkill only to its own thread group.
 CPUQuota=20%
 MemoryMax=256M
 TasksMax=64
