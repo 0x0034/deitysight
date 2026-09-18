@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -49,6 +51,35 @@ func TestAtopCollectorDoesNotUseShellAndReportsFailure(t *testing.T) {
 	}
 }
 
+func TestAtopCollectorEmitsRawWFileAsBase64(t *testing.T) {
+	raw := []byte{0x00, 0x01, 0xff, 0x7f, 0x42}
+	dir := t.TempDir()
+	runner := func(ctx context.Context, args []string, outputPath string) ([]byte, error) {
+		if len(args) != 5 || args[0] != "-w" || args[2] != "1" || args[3] != "1" {
+			t.Fatalf("unexpected atop raw args: %v", args)
+		}
+		if !filepath.IsAbs(outputPath) || !strings.HasPrefix(outputPath, dir+string(os.PathSeparator)) {
+			t.Fatalf("raw output escaped configured directory: %s", outputPath)
+		}
+		return nil, os.WriteFile(outputPath, raw, 0600)
+	}
+	c, err := NewLinuxCollectorWithAtopRawRunner(t.TempDir(), 1024, AtopConfig{Enabled: true, Mode: "raw", Path: dir, Binary: "/usr/bin/atop", Interval: time.Second}, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	var got []Record
+	if err := c.collectAtop(context.Background(), func(r Record) error { got = append(got, r); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Source != "/atop/raw" || got[0].Encoding != "base64" || got[0].Content != "AAH/f0I=" || !got[0].Complete {
+		t.Fatalf("unexpected raw atop record: %+v", got)
+	}
+	if _, err := os.Stat(got[0].Source); !os.IsNotExist(err) {
+		t.Fatal("raw output was not removed after collection")
+	}
+}
+
 func TestAtopConfigValidation(t *testing.T) {
 	c := testConfig(t)
 	c.Atop.Enabled = true
@@ -60,5 +91,11 @@ func TestAtopConfigValidation(t *testing.T) {
 	c.Atop.Interval = 0
 	if c.Validate() == nil {
 		t.Fatal("invalid atop interval accepted")
+	}
+	c.Atop.Interval = time.Second
+	c.Atop.Mode = "raw"
+	c.Atop.Path = "/var/log/atop"
+	if c.Validate() == nil {
+		t.Fatal("raw atop path outside storage accepted")
 	}
 }
