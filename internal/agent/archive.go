@@ -141,6 +141,7 @@ func (a *Agent) archive(t *Task) error {
 			"io":           "rchar/wchar count syscall bytes, not storage bytes. read_bytes/write_bytes are storage accounting; process io may include waited-for children and thread-group totals.",
 			"diskstats":    "Sector counters use 512-byte sectors; time counters use milliseconds. Device-level accounting cannot establish per-process causality.",
 			"pressure":     "PSI avg10/avg60/avg300 are percentages; total is microseconds. Fields and full-stall support vary by kernel.",
+			"atop":         "Optional parseable `atop -P ALL <interval> 1` output. It is an auxiliary snapshot and does not replace raw proc/cgroup records. The agent executes only a fixed atop binary path and fixed arguments; stderr, exit failure and truncation are retained as errors.",
 			"wchan":        "Zero is ambiguous: running state, hidden symbol or denied visibility; it does not prove absence of waiting.",
 			"cgroup":       "Raw units are source-defined: v2 cpu.stat usec, cpu.max quota/period usec, memory bytes, io.stat bytes and operation counts; v1 cpuacct.usage ns, cpuacct.stat clock ticks. Ancestors are visible limits only. Hierarchical counters include descendants: do not add parent/child counters or cgroup/process totals.",
 			"identity":     "Correlate agent_id, boot_id, PID, start_time_ticks and TID/thread_start_time_ticks. identity_unstable invalidates this sample's affected object records.",

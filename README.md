@@ -22,6 +22,17 @@ systemd 模板位于 `deploy/deitysight.service`。修改存储路径时同时�
 
 `background.enabled: false` 时仅按需采集；设为 `true` 后以 `background.step` 低频采样。任务保存自身的历史副本。数据写入 `storage.path`，结果保留 24 小时，任务与幂等记录保留 7 天；预算计入原始文件、归档、临时文件和下载中的文件。
 
+可选启用 atop 快照：
+
+```yaml
+atop:
+  enabled: true
+  binary: "/usr/bin/atop"
+  interval: "1s"
+```
+
+启用后每轮使用固定参数执行 `atop -P ALL <interval> 1`，将标准输出原样保存为 `/atop/parseable`。仅允许 `/bin/atop`、`/usr/bin/atop`、`/usr/sbin/atop` 或 `/usr/local/bin/atop`，不经过 shell，也不接受其他参数。atop 缺失、退出、超时和截断会进入错误记录；proc/cgroup 原始采集仍独立保留。
+
 调用示例（`DEITYSIGHT_TOKEN` 由调用者设置，不是 agent 的配置入口）：
 
 ```sh
@@ -43,6 +54,6 @@ curl --fail -H "Authorization: Bearer $DEITYSIGHT_TOKEN" \
 
 每轮有软时间预算，每数据源有字节上限。权限限制、进程退出、身份变化、超时、截断与丢点均作为缺失报告，不会补成零或推断根因。`completed` 表示本次计划采集未报告缺失，不保证内核暴露了所有主机对象。容器部署仅能看到所在命名空间，因此建议在宿主机部署。
 
-采集仅访问固定内核数据源；不读取命令行参数、环境变量、进程内存或业务文件正文，不执行 shell/外部命令。进程聚合计数与线程计数不能累加，线程内存共享，`wchan=0` 也不能证明没有等待。任务因 agent 重启而中断时只恢复已有证据，不继续补采。元数据损坏会暂停新任务准入。
+采集仅访问固定内核数据源；不读取命令行参数、环境变量、进程内存或业务文件正文。除白名单中的 atop 直接执行外，不执行 shell 或其他外部命令。进程聚合计数与线程计数不能累加，线程内存共享，`wchan=0` 也不能证明没有等待。任务因 agent 重启而中断时只恢复已有证据，不继续补采。元数据损坏会暂停新任务准入。
 
 详细协议与边界见 [技术设计](docs/design/agent-technical-design.md)、[数据源说明](docs/design/linux-data-sources.md)；验证证据见 [实施验证](docs/implementation-validation.md)。

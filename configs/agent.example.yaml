@@ -19,3 +19,7 @@ sampling:
   max_points: 301
   round_timeout: "2s"
   max_source_bytes: 1048576
+atop:
+  enabled: false
+  binary: "/usr/bin/atop"
+  interval: "1s"

@@ -44,7 +44,7 @@ func run() error {
 	if err := sandbox.RestrictProcessControl(); err != nil {
 		return err
 	}
-	collector, err := agent.NewLinuxCollector("/proc", cfg.Sampling.MaxSourceBytes)
+	collector, err := agent.NewLinuxCollectorWithAtop("/proc", cfg.Sampling.MaxSourceBytes, cfg.Atop)
 	if err != nil {
 		return err
 	}

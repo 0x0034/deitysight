@@ -2,12 +2,14 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -23,12 +25,28 @@ var objectSources = []string{"stat", "status", "io", "cgroup", "wchan"}
 var containerPattern = regexp.MustCompile(`(?:^|[/:-])([a-f0-9]{64})(?:\.scope)?(?:/|$)`)
 
 type LinuxCollector struct {
-	proc  *os.Root
-	limit int64
-	meta  map[string]any
+	proc    *os.Root
+	limit   int64
+	meta    map[string]any
+	atop    AtopConfig
+	runAtop AtopRunner
 }
 
+type AtopRunner func(context.Context, []string) ([]byte, []byte, error)
+
 func NewLinuxCollector(procPath string, limit int64) (*LinuxCollector, error) {
+	return NewLinuxCollectorWithAtop(procPath, limit, DefaultConfig().Atop)
+}
+
+func NewLinuxCollectorWithAtop(procPath string, limit int64, atop AtopConfig) (*LinuxCollector, error) {
+	return newLinuxCollector(procPath, limit, atop, nil)
+}
+
+func NewLinuxCollectorWithAtopRunner(procPath string, limit int64, atop AtopConfig, runner AtopRunner) (*LinuxCollector, error) {
+	return newLinuxCollector(procPath, limit, atop, runner)
+}
+
+func newLinuxCollector(procPath string, limit int64, atop AtopConfig, runner AtopRunner) (*LinuxCollector, error) {
 	if limit <= 0 || limit > 16<<20 {
 		return nil, errors.New("invalid source byte limit")
 	}
@@ -36,7 +54,25 @@ func NewLinuxCollector(procPath string, limit int64) (*LinuxCollector, error) {
 	if e != nil {
 		return nil, e
 	}
-	c := &LinuxCollector{proc: r, limit: limit, meta: map[string]any{"architecture": runtime.GOARCH, "page_size": os.Getpagesize(), "logical_cpus": runtime.NumCPU(), "clock_ticks": nil}}
+	if atop.Enabled && !allowedAtopBinary(atop.Binary) {
+		r.Close()
+		return nil, errors.New("atop binary is not whitelisted")
+	}
+	if atop.Enabled && (atop.Interval <= 0 || atop.Interval > 60*time.Second || atop.Interval%time.Second != 0) {
+		r.Close()
+		return nil, errors.New("invalid atop interval")
+	}
+	c := &LinuxCollector{proc: r, limit: limit, atop: atop, runAtop: runner, meta: map[string]any{"architecture": runtime.GOARCH, "page_size": os.Getpagesize(), "logical_cpus": runtime.NumCPU(), "clock_ticks": nil}}
+	if atop.Enabled && c.runAtop == nil {
+		c.runAtop = func(ctx context.Context, args []string) ([]byte, []byte, error) {
+			cmd := exec.CommandContext(ctx, atop.Binary, args...)
+			cmd.Env = []string{"LC_ALL=C", "LANG=C", "TERM=dumb"}
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			err := cmd.Run()
+			return stdout.Bytes(), stderr.Bytes(), err
+		}
+	}
 	for key, p := range map[string]string{"boot_id": "sys/kernel/random/boot_id", "kernel_version": "sys/kernel/osrelease", "hostname": "sys/kernel/hostname"} {
 		if b, e := c.auxiliary(r, p); e == nil {
 			c.meta[key] = strings.TrimSpace(string(b))
@@ -62,7 +98,47 @@ func (c *LinuxCollector) Metadata() map[string]any {
 	for k, v := range c.meta {
 		out[k] = v
 	}
+	out["atop_enabled"] = c.atop.Enabled
+	if c.atop.Enabled {
+		out["atop_binary"] = c.atop.Binary
+		out["atop_interval_seconds"] = int64(c.atop.Interval / time.Second)
+	}
 	return out
+}
+
+func (c *LinuxCollector) collectAtop(ctx context.Context, emit func(Record) error) error {
+	if !c.atop.Enabled {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	seconds := int64(c.atop.Interval / time.Second)
+	stdout, stderr, err := c.runAtop(ctx, []string{"-P", "ALL", strconv.FormatInt(seconds, 10), "1"})
+	now := time.Now().UTC()
+	rec := Record{Source: "/atop/parseable", Scope: "host", StartedAt: now, FinishedAt: time.Now().UTC(), Encoding: "utf8", Complete: err == nil}
+	if err != nil {
+		rec.Kind, rec.Code = "error", "atop_failed"
+		if len(stderr) > 0 {
+			stdout = append(stdout, []byte("\n[stderr]\n")...)
+			stdout = append(stdout, stderr...)
+		}
+	} else if len(stdout) == 0 {
+		rec.Kind, rec.Code = "error", "atop_empty"
+		rec.Complete = false
+	}
+	if int64(len(stdout)) > c.limit {
+		stdout = stdout[:c.limit]
+		rec.Complete = false
+		rec.Code = "source_truncated"
+	}
+	if utf8.Valid(stdout) {
+		rec.Content = string(stdout)
+	} else {
+		rec.Encoding = "base64"
+		rec.Content = base64.StdEncoding.EncodeToString(stdout)
+	}
+	return emit(rec)
 }
 func sourceCode(e error) string {
 	switch {
@@ -226,6 +302,9 @@ func (c *LinuxCollector) Collect(ctx context.Context, emit func(Record) error) e
 		if p == "self/mountinfo" {
 			mountData = b
 		}
+	}
+	if err := c.collectAtop(ctx, emit); err != nil {
+		return err
 	}
 	ms := mounts(mountData)
 	seen := map[string]bool{}

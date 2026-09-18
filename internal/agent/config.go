@@ -18,6 +18,7 @@ type Config struct {
 	Storage    StorageConfig    `yaml:"storage"`
 	Background BackgroundConfig `yaml:"background"`
 	Sampling   SamplingConfig   `yaml:"sampling"`
+	Atop       AtopConfig       `yaml:"atop"`
 }
 type HTTPConfig struct {
 	Listen string `yaml:"listen"`
@@ -45,12 +46,21 @@ type SamplingConfig struct {
 	MaxSourceBytes int64         `yaml:"max_source_bytes"`
 }
 
+// AtopConfig enables the fixed, parseable `atop` invocation. The agent never
+// invokes a shell and does not accept arbitrary executable paths.
+type AtopConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	Binary   string        `yaml:"binary"`
+	Interval time.Duration `yaml:"interval"`
+}
+
 func DefaultConfig() Config {
 	return Config{
 		HTTP:       HTTPConfig{Listen: "127.0.0.1:19100"},
 		Storage:    StorageConfig{Path: "/var/lib/deitysight", ResultRetention: 24 * time.Hour, TaskRetention: 7 * 24 * time.Hour, MaxBytes: 1 << 30, MinFreeBytes: 1 << 30},
 		Background: BackgroundConfig{Step: 30 * time.Second, Retention: 10 * time.Minute},
 		Sampling:   SamplingConfig{DefaultWindow: 30 * time.Second, DefaultStep: 5 * time.Second, MaxWindow: 300 * time.Second, MinStep: time.Second, MaxPoints: 301, RoundTimeout: 2 * time.Second, MaxSourceBytes: 1 << 20},
+		Atop:       AtopConfig{Binary: "/usr/bin/atop", Interval: time.Second},
 	}
 }
 func LoadConfig(path string) (Config, error) {
@@ -97,11 +107,25 @@ func (c Config) Validate() error {
 	if c.Background.Step <= 0 || c.Background.Retention <= 0 {
 		return errors.New("background timing must be positive")
 	}
+	if c.Atop.Enabled {
+		if !allowedAtopBinary(c.Atop.Binary) || c.Atop.Interval <= 0 || c.Atop.Interval > 60*time.Second || c.Atop.Interval%time.Second != 0 {
+			return errors.New("invalid atop configuration")
+		}
+	}
 	s := c.Sampling
 	if s.MinStep <= 0 || s.MaxWindow <= 0 || s.MaxPoints < 2 || s.MaxPoints > 1000000 || s.RoundTimeout <= 0 || s.MaxSourceBytes <= 0 || s.MaxSourceBytes > 16<<20 {
 		return errors.New("invalid sampling limits (source limit must be <= 16 MiB)")
 	}
 	return c.validateSampling(s.DefaultWindow, s.DefaultStep)
+}
+
+func allowedAtopBinary(binary string) bool {
+	switch filepath.Clean(binary) {
+	case "/bin/atop", "/usr/bin/atop", "/usr/sbin/atop", "/usr/local/bin/atop":
+		return binary == filepath.Clean(binary)
+	default:
+		return false
+	}
 }
 func (c Config) validateSampling(window, step time.Duration) error {
 	if window <= 0 || step <= 0 || window > c.Sampling.MaxWindow || step < c.Sampling.MinStep || step > window || window%time.Second != 0 || step%time.Second != 0 {
