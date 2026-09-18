@@ -54,14 +54,17 @@ func TestAtopCollectorDoesNotUseShellAndReportsFailure(t *testing.T) {
 func TestAtopCollectorEmitsRawWFileAsBase64(t *testing.T) {
 	raw := []byte{0x00, 0x01, 0xff, 0x7f, 0x42}
 	dir := t.TempDir()
-	runner := func(ctx context.Context, args []string, outputPath string) ([]byte, error) {
-		if len(args) != 5 || args[0] != "-w" || args[2] != "1" || args[3] != "1" {
+	var outputPath string
+	runner := func(ctx context.Context, args []string, path string) ([]byte, error) {
+		if len(args) != 3 || args[0] != "-w" || args[1] != "1" || args[2] != "1" {
 			t.Fatalf("unexpected atop raw args: %v", args)
 		}
-		if !filepath.IsAbs(outputPath) || !strings.HasPrefix(outputPath, dir+string(os.PathSeparator)) {
-			t.Fatalf("raw output escaped configured directory: %s", outputPath)
+		_ = ctx
+		outputPath = path
+		if !filepath.IsAbs(path) || !strings.HasPrefix(path, dir+string(os.PathSeparator)) {
+			t.Fatalf("raw output escaped configured directory: %s", path)
 		}
-		return nil, os.WriteFile(outputPath, raw, 0600)
+		return nil, os.WriteFile(path, raw, 0600)
 	}
 	c, err := NewLinuxCollectorWithAtopRawRunner(t.TempDir(), 1024, AtopConfig{Enabled: true, Mode: "raw", Path: dir, Binary: "/usr/bin/atop", Interval: time.Second}, runner)
 	if err != nil {
@@ -75,7 +78,10 @@ func TestAtopCollectorEmitsRawWFileAsBase64(t *testing.T) {
 	if len(got) != 1 || got[0].Source != "/atop/raw" || got[0].Encoding != "base64" || got[0].Content != "AAH/f0I=" || !got[0].Complete {
 		t.Fatalf("unexpected raw atop record: %+v", got)
 	}
-	if _, err := os.Stat(got[0].Source); !os.IsNotExist(err) {
+	if outputPath == "" {
+		t.Fatal("raw output path was not provided")
+	}
+	if _, err := os.Stat(outputPath); !os.IsNotExist(err) {
 		t.Fatal("raw output was not removed after collection")
 	}
 }

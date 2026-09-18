@@ -25,14 +25,16 @@ var objectSources = []string{"stat", "status", "io", "cgroup", "wchan"}
 var containerPattern = regexp.MustCompile(`(?:^|[/:-])([a-f0-9]{64})(?:\.scope)?(?:/|$)`)
 
 type LinuxCollector struct {
-	proc    *os.Root
-	limit   int64
-	meta    map[string]any
-	atop    AtopConfig
-	runAtop AtopRunner
+	proc       *os.Root
+	limit      int64
+	meta       map[string]any
+	atop       AtopConfig
+	runAtop    AtopRunner
+	runAtopRaw AtopRawRunner
 }
 
 type AtopRunner func(context.Context, []string) ([]byte, []byte, error)
+type AtopRawRunner func(context.Context, []string, string) ([]byte, error)
 
 func NewLinuxCollector(procPath string, limit int64) (*LinuxCollector, error) {
 	return NewLinuxCollectorWithAtop(procPath, limit, DefaultConfig().Atop)
@@ -44,6 +46,15 @@ func NewLinuxCollectorWithAtop(procPath string, limit int64, atop AtopConfig) (*
 
 func NewLinuxCollectorWithAtopRunner(procPath string, limit int64, atop AtopConfig, runner AtopRunner) (*LinuxCollector, error) {
 	return newLinuxCollector(procPath, limit, atop, runner)
+}
+
+func NewLinuxCollectorWithAtopRawRunner(procPath string, limit int64, atop AtopConfig, runner AtopRawRunner) (*LinuxCollector, error) {
+	c, err := newLinuxCollector(procPath, limit, atop, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.runAtopRaw = runner
+	return c, nil
 }
 
 func newLinuxCollector(procPath string, limit int64, atop AtopConfig, runner AtopRunner) (*LinuxCollector, error) {
@@ -71,6 +82,17 @@ func newLinuxCollector(procPath string, limit int64, atop AtopConfig, runner Ato
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr
 			err := cmd.Run()
 			return stdout.Bytes(), stderr.Bytes(), err
+		}
+	}
+	if atop.Enabled && atop.Mode == "raw" && c.runAtopRaw == nil {
+		c.runAtopRaw = func(ctx context.Context, args []string, outputPath string) ([]byte, error) {
+			commandArgs := append([]string{"-w", outputPath}, args[1:]...)
+			cmd := exec.CommandContext(ctx, atop.Binary, commandArgs...)
+			cmd.Env = []string{"LC_ALL=C", "LANG=C", "TERM=dumb"}
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+			return stderr.Bytes(), err
 		}
 	}
 	for key, p := range map[string]string{"boot_id": "sys/kernel/random/boot_id", "kernel_version": "sys/kernel/osrelease", "hostname": "sys/kernel/hostname"} {
@@ -101,7 +123,11 @@ func (c *LinuxCollector) Metadata() map[string]any {
 	out["atop_enabled"] = c.atop.Enabled
 	if c.atop.Enabled {
 		out["atop_binary"] = c.atop.Binary
+		out["atop_mode"] = c.atop.Mode
 		out["atop_interval_seconds"] = int64(c.atop.Interval / time.Second)
+		if c.atop.Mode == "raw" {
+			out["atop_path"] = c.atop.Path
+		}
 	}
 	return out
 }
@@ -114,11 +140,17 @@ func (c *LinuxCollector) collectAtop(ctx context.Context, emit func(Record) erro
 		return err
 	}
 	seconds := int64(c.atop.Interval / time.Second)
+	if c.atop.Mode == "raw" {
+		return c.collectAtopRaw(ctx, seconds, emit)
+	}
 	stdout, stderr, err := c.runAtop(ctx, []string{"-P", "ALL", strconv.FormatInt(seconds, 10), "1"})
 	now := time.Now().UTC()
 	rec := Record{Source: "/atop/parseable", Scope: "host", StartedAt: now, FinishedAt: time.Now().UTC(), Encoding: "utf8", Complete: err == nil}
 	if err != nil {
 		rec.Kind, rec.Code = "error", "atop_failed"
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			rec.Code = "atop_timeout"
+		}
 		if len(stderr) > 0 {
 			stdout = append(stdout, []byte("\n[stderr]\n")...)
 			stdout = append(stdout, stderr...)
@@ -139,6 +171,70 @@ func (c *LinuxCollector) collectAtop(ctx context.Context, emit func(Record) erro
 		rec.Content = base64.StdEncoding.EncodeToString(stdout)
 	}
 	return emit(rec)
+}
+
+func (c *LinuxCollector) collectAtopRaw(ctx context.Context, seconds int64, emit func(Record) error) error {
+	dir := c.atop.Path
+	if dir == "" {
+		return emit(Record{Kind: "error", Source: "/atop/raw", Scope: "host", Code: "atop_storage_unavailable", Complete: false})
+	}
+	if err := ensureNoSymlinkPath(dir); err != nil {
+		return emit(Record{Kind: "error", Source: "/atop/raw", Scope: "host", Code: "atop_storage_unavailable", Complete: false})
+	}
+	f, err := os.CreateTemp(dir, ".atop-*.raw")
+	if err != nil {
+		return emit(Record{Kind: "error", Source: "/atop/raw", Scope: "host", Code: "atop_storage_unavailable", Complete: false})
+	}
+	outputPath := f.Name()
+	if err := f.Close(); err != nil {
+		_ = os.Remove(outputPath)
+		return emit(Record{Kind: "error", Source: "/atop/raw", Scope: "host", Code: "atop_storage_unavailable", Complete: false})
+	}
+	_ = os.Remove(outputPath)
+	defer os.Remove(outputPath)
+	args := []string{"-w", strconv.FormatInt(seconds, 10), "1"}
+	stderr, runErr := c.runAtopRaw(ctx, args, outputPath)
+	var data []byte
+	if file, openErr := os.Open(outputPath); openErr == nil {
+		data, _ = io.ReadAll(io.LimitReader(file, c.limit+1))
+		_ = file.Close()
+	}
+	now := time.Now().UTC()
+	rec := Record{Source: "/atop/raw", Scope: "host", StartedAt: now, FinishedAt: time.Now().UTC(), Encoding: "base64", Complete: runErr == nil}
+	if runErr != nil {
+		rec.Kind, rec.Code = "error", "atop_failed"
+		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, context.Canceled) {
+			rec.Code = "atop_timeout"
+		}
+		if len(data) == 0 {
+			data = stderr
+		}
+	} else if len(data) == 0 {
+		rec.Kind, rec.Code = "error", "atop_empty"
+		rec.Complete = false
+	}
+	if int64(len(data)) > c.limit {
+		data = data[:c.limit]
+		rec.Complete = false
+		rec.Code = "source_truncated"
+	}
+	rec.Content = base64.StdEncoding.EncodeToString(data)
+	return emit(rec)
+}
+
+func ensureNoSymlinkPath(name string) error {
+	clean := filepath.Clean(name)
+	if err := os.MkdirAll(clean, 0700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(clean)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return errors.New("atop path must be a real directory")
+	}
+	return nil
 }
 func sourceCode(e error) string {
 	switch {

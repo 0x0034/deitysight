@@ -44,7 +44,11 @@ func run() error {
 	if err := sandbox.RestrictProcessControl(); err != nil {
 		return err
 	}
-	collector, err := agent.NewLinuxCollectorWithAtop("/proc", cfg.Sampling.MaxSourceBytes, cfg.Atop)
+	atop := cfg.Atop
+	if atop.Mode == "raw" && atop.Path == "" {
+		atop.Path = cfg.Storage.Path
+	}
+	collector, err := agent.NewLinuxCollectorWithAtop("/proc", cfg.Sampling.MaxSourceBytes, atop)
 	if err != nil {
 		return err
 	}

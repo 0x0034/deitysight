@@ -27,11 +27,13 @@ systemd 模板位于 `deploy/deitysight.service`。修改存储路径时同时�
 ```yaml
 atop:
   enabled: true
+  mode: "raw"
   binary: "/usr/bin/atop"
+  path: "/var/lib/deitysight/atop"
   interval: "1s"
 ```
 
-启用后每轮使用固定参数执行 `atop -P ALL <interval> 1`，将标准输出原样保存为 `/atop/parseable`。仅允许 `/bin/atop`、`/usr/bin/atop`、`/usr/sbin/atop` 或 `/usr/local/bin/atop`，不经过 shell，也不接受其他参数。atop 缺失、退出、超时和截断会进入错误记录；proc/cgroup 原始采集仍独立保留。
+parseable 模式每轮使用固定参数执行 `atop -P ALL <interval> 1`，将标准输出原样保存为 `/atop/parseable`；raw 模式使用 `atop -w <临时文件> <interval> 1`，将原生二进制快照以 Base64 保存为 `/atop/raw`。仅允许 `/bin/atop`、`/usr/bin/atop`、`/usr/sbin/atop` 或 `/usr/local/bin/atop`，不经过 shell，也不接受其他参数。atop 缺失、退出、超时和截断会进入错误记录；proc/cgroup 原始采集仍独立保留。raw 临时文件必须位于 `storage.path` 内，读取后删除。
 
 调用示例（`DEITYSIGHT_TOKEN` 由调用者设置，不是 agent 的配置入口）：
 

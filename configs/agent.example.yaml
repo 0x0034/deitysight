@@ -1,13 +1,19 @@
 http:
+  # 监听地址；远程 server 访问时改为管理网地址。
   listen: "127.0.0.1:19100"
+  # 必须替换为真实 token，不能保留占位符。
   token: "REPLACE_WITH_DEPLOYMENT_SECRET"
 storage:
+  # agent 专用绝对目录；不要与其他实例共享。
   path: "/var/lib/deitysight"
+  # 结果归档保留 24 小时，任务元数据保留 7 天。
   result_retention: "24h"
   task_retention: "168h"
+  # 原始数据、临时文件、归档和下载租约共同计入预算。
   max_bytes: 1073741824
   min_free_bytes: 1073741824
 background:
+  # false 表示只在收到任务后采集。
   enabled: false
   step: "30s"
   retention: "10m"
@@ -20,6 +26,11 @@ sampling:
   round_timeout: "2s"
   max_source_bytes: 1048576
 atop:
+  # 可选辅助快照；启用后只执行白名单 atop 路径和固定参数。
   enabled: false
+  # parseable 保存文本；raw 使用 atop -w 保存原生二进制快照。
+  mode: "parseable"
   binary: "/usr/bin/atop"
+  # raw 模式临时文件目录，必须位于 storage.path 内；留空则使用 storage.path。
+  path: "/var/lib/deitysight/atop"
   interval: "1s"

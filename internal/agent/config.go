@@ -46,11 +46,13 @@ type SamplingConfig struct {
 	MaxSourceBytes int64         `yaml:"max_source_bytes"`
 }
 
-// AtopConfig enables the fixed, parseable `atop` invocation. The agent never
-// invokes a shell and does not accept arbitrary executable paths.
+// AtopConfig enables a fixed parseable or raw `atop` invocation. The agent
+// never invokes a shell and does not accept arbitrary executable paths.
 type AtopConfig struct {
 	Enabled  bool          `yaml:"enabled"`
+	Mode     string        `yaml:"mode"`
 	Binary   string        `yaml:"binary"`
+	Path     string        `yaml:"path"`
 	Interval time.Duration `yaml:"interval"`
 }
 
@@ -60,7 +62,7 @@ func DefaultConfig() Config {
 		Storage:    StorageConfig{Path: "/var/lib/deitysight", ResultRetention: 24 * time.Hour, TaskRetention: 7 * 24 * time.Hour, MaxBytes: 1 << 30, MinFreeBytes: 1 << 30},
 		Background: BackgroundConfig{Step: 30 * time.Second, Retention: 10 * time.Minute},
 		Sampling:   SamplingConfig{DefaultWindow: 30 * time.Second, DefaultStep: 5 * time.Second, MaxWindow: 300 * time.Second, MinStep: time.Second, MaxPoints: 301, RoundTimeout: 2 * time.Second, MaxSourceBytes: 1 << 20},
-		Atop:       AtopConfig{Binary: "/usr/bin/atop", Interval: time.Second},
+		Atop:       AtopConfig{Mode: "parseable", Binary: "/usr/bin/atop", Interval: time.Second},
 	}
 }
 func LoadConfig(path string) (Config, error) {
@@ -108,8 +110,17 @@ func (c Config) Validate() error {
 		return errors.New("background timing must be positive")
 	}
 	if c.Atop.Enabled {
-		if !allowedAtopBinary(c.Atop.Binary) || c.Atop.Interval <= 0 || c.Atop.Interval > 60*time.Second || c.Atop.Interval%time.Second != 0 {
+		if !allowedAtopBinary(c.Atop.Binary) || (c.Atop.Mode != "parseable" && c.Atop.Mode != "raw") || c.Atop.Interval <= 0 || c.Atop.Interval > 60*time.Second || c.Atop.Interval%time.Second != 0 {
 			return errors.New("invalid atop configuration")
+		}
+		if c.Atop.Mode == "raw" {
+			p := c.Atop.Path
+			if p == "" {
+				p = c.Storage.Path
+			}
+			if !validAtopRawPath(c.Storage.Path, p) {
+				return errors.New("atop.path must be inside storage.path")
+			}
 		}
 	}
 	s := c.Sampling
@@ -126,6 +137,13 @@ func allowedAtopBinary(binary string) bool {
 	default:
 		return false
 	}
+}
+
+func validAtopRawPath(storagePath, rawPath string) bool {
+	if !filepath.IsAbs(rawPath) || filepath.Clean(rawPath) != rawPath {
+		return false
+	}
+	return rawPath == storagePath || strings.HasPrefix(rawPath, storagePath+string(filepath.Separator))
 }
 func (c Config) validateSampling(window, step time.Duration) error {
 	if window <= 0 || step <= 0 || window > c.Sampling.MaxWindow || step < c.Sampling.MinStep || step > window || window%time.Second != 0 || step%time.Second != 0 {
