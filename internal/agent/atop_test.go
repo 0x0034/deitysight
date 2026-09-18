@@ -112,6 +112,11 @@ func TestAtopConfigValidation(t *testing.T) {
 		t.Fatal("non-whitelisted atop binary accepted")
 	}
 	c.Atop.Binary = "/usr/bin/atop"
+	c.Atop.Mode = "unsupported"
+	if c.Validate() == nil {
+		t.Fatal("unsupported atop mode accepted")
+	}
+	c.Atop.Mode = "parseable"
 	c.Atop.Interval = 0
 	if c.Validate() == nil {
 		t.Fatal("invalid atop interval accepted")

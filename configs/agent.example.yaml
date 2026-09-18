@@ -33,4 +33,5 @@ atop:
   binary: "/usr/bin/atop"
   # raw 模式临时文件目录，必须位于 storage.path 内；留空则使用 storage.path。
   path: "/var/lib/deitysight/atop"
+  # task 采集时使用 task.step_seconds；此值仅作无 task 上下文的默认值。
   interval: "1s"

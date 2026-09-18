@@ -36,6 +36,21 @@ type LinuxCollector struct {
 type AtopRunner func(context.Context, []string) ([]byte, []byte, error)
 type AtopRawRunner func(context.Context, []string, string) ([]byte, error)
 
+type taskSamplingContextKey struct{}
+type taskSamplingParameters struct {
+	window time.Duration
+	step   time.Duration
+}
+
+func withTaskSampling(ctx context.Context, window, step time.Duration) context.Context {
+	return context.WithValue(ctx, taskSamplingContextKey{}, taskSamplingParameters{window: window, step: step})
+}
+
+func taskSamplingFromContext(ctx context.Context) (taskSamplingParameters, bool) {
+	p, ok := ctx.Value(taskSamplingContextKey{}).(taskSamplingParameters)
+	return p, ok
+}
+
 func NewLinuxCollector(procPath string, limit int64) (*LinuxCollector, error) {
 	return NewLinuxCollectorWithAtop(procPath, limit, DefaultConfig().Atop)
 }
@@ -136,10 +151,17 @@ func (c *LinuxCollector) collectAtop(ctx context.Context, emit func(Record) erro
 	if !c.atop.Enabled {
 		return nil
 	}
+	task, ok := taskSamplingFromContext(ctx)
+	if !ok {
+		return nil
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	seconds := int64(c.atop.Interval / time.Second)
+	if task.step > 0 {
+		seconds = int64(task.step / time.Second)
+	}
 	if c.atop.Mode == "raw" {
 		return c.collectAtopRaw(ctx, seconds, emit)
 	}

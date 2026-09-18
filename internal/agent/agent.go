@@ -206,9 +206,13 @@ func (a *Agent) worker() {
 		}
 	}
 }
-func (a *Agent) collect(step time.Duration, emit func(Record) error) error {
+func (a *Agent) collect(step, window time.Duration, taskScoped bool, emit func(Record) error) error {
 	timeout := min(step, a.cfg.Sampling.RoundTimeout)
-	ctx, cancel := context.WithTimeout(a.ctx, timeout)
+	base := a.ctx
+	if taskScoped {
+		base = withTaskSampling(base, window, step)
+	}
+	ctx, cancel := context.WithTimeout(base, timeout)
 	defer cancel()
 	a.mu.Lock()
 	a.roundDeadline = time.Now().Add(timeout)
@@ -281,7 +285,7 @@ func (a *Agent) run(id string) {
 			bgName = "background/" + sampleID + ".tmp"
 			a.advanceBackground()
 		}
-		err := a.collect(step, func(r Record) error {
+		err := a.collect(step, time.Duration(t.WindowSeconds)*time.Second, true, func(r Record) error {
 			r.SchemaVersion = 1
 			r.SampleID = sampleID
 			r.OffsetNS = int64(time.Since(start))
@@ -462,7 +466,7 @@ func (a *Agent) background(duringTask bool) {
 	if a.store.Append(tmp, nil, false, false) != nil {
 		return
 	}
-	err := a.collect(a.cfg.Background.Step, func(r Record) error {
+	err := a.collect(a.cfg.Background.Step, 0, false, func(r Record) error {
 		r.SchemaVersion = 1
 		r.SampleID = id
 		if r.StartedAt.IsZero() {

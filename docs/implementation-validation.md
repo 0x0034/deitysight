@@ -9,6 +9,7 @@
 - 可配置后台采样；串行执行、按需优先、历史冻结、跨重启 boot_id 归属。
 - 主机、所有可枚举进程/线程、相关 cgroup 及可见祖先的原始白名单数据；不做 Top N、排名或根因分析。
 - 可选 atop parseable/raw 快照；固定可执行路径和参数，agent 不执行 shell，atop 输出只作为辅助原始记录。
+- atop 仅在按需 task 的采样轮次启动；task 的有效 `step_seconds` 覆盖 atop 默认间隔，后台采样不会启动 atop。
 - 专用目录、独占锁、原子元数据、流式归档、SHA-256、幂等恢复、TTL、下载租约与配额。
 - 中断恢复、损坏 JSONL 原件保留、损坏元数据阻止新任务、结果损坏拒绝下载。
 - root systemd 模板；只读文件系统保护，二进制 seccomp TSYNC 禁止进程控制与探针。

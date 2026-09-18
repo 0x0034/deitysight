@@ -98,20 +98,20 @@ server 可以在任务请求中传入 `window_seconds` 和 `step_seconds` 覆盖
 | `mode` | `parseable` | `parseable` 保存 `-P ALL` 文本输出；`raw` 使用 `-w` 保存 atop 原生二进制快照，并以 Base64 封装。 |
 | `binary` | `/usr/bin/atop` | 只允许 `/bin/atop`、`/usr/bin/atop`、`/usr/sbin/atop`、`/usr/local/bin/atop`。不允许任意可执行文件路径。 |
 | `path` | 空（使用 `storage.path`） | 仅 raw 模式使用的临时输出目录，必须位于 `storage.path` 内。每轮读取后删除临时文件，不作为长期 atop 日志目录。 |
-| `interval` | `1s` | 传给 atop 的间隔，允许 `1s` 到 `60s` 的整秒值。 |
+| `interval` | `1s` | 无 task 上下文时的默认间隔。正常 HTTP task 采集时，atop 间隔始终使用该 task 的有效 `step_seconds`，因此 task 参数优先。 |
 
 parseable 模式每轮直接执行固定调用：
 
 ```text
-<binary> -P ALL <interval_seconds> 1
+<binary> -P ALL <task_step_seconds> 1
 ```
 
-agent 不经过 shell，也不接受配置中的额外命令参数。atop 的标准输出按 `/atop/parseable` 原样写入任务结果；退出失败、stderr、超时、空输出和截断都会单独记录。atop 是辅助数据源，不能替代 `/proc`、线程和 cgroup 采集。
+agent 不经过 shell，也不接受配置中的额外命令参数。atop 只随按需 task 的采样轮次启动，后台采样不会启动 atop。task 的有效 `step_seconds` 覆盖 `atop.interval`；窗口决定 task 有多少轮 atop 记录。标准输出按 `/atop/parseable` 原样写入任务结果；退出失败、stderr、超时、空输出和截断都会单独记录。atop 是辅助数据源，不能替代 `/proc`、线程和 cgroup 采集。
 
 raw 模式每轮执行等价于：
 
 ```text
-<binary> -w <temporary-file-under-atop.path> <interval_seconds> 1
+<binary> -w <temporary-file-under-atop.path> <task_step_seconds> 1
 ```
 
 原生二进制内容按 `/atop/raw` 保存为 Base64；临时文件在读取后删除，内容大小受 `sampling.max_source_bytes` 限制，最终 JSONL 与归档会计入存储预算。

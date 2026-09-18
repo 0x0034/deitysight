@@ -33,7 +33,7 @@ atop:
   interval: "1s"
 ```
 
-parseable 模式每轮使用固定参数执行 `atop -P ALL <interval> 1`，将标准输出原样保存为 `/atop/parseable`；raw 模式使用 `atop -w <临时文件> <interval> 1`，将原生二进制快照以 Base64 保存为 `/atop/raw`。仅允许 `/bin/atop`、`/usr/bin/atop`、`/usr/sbin/atop` 或 `/usr/local/bin/atop`，不经过 shell，也不接受其他参数。atop 缺失、退出、超时和截断会进入错误记录；proc/cgroup 原始采集仍独立保留。raw 临时文件必须位于 `storage.path` 内，读取后删除。
+parseable 模式每个 task 采样轮次使用固定参数执行 `atop -P ALL <task_step_seconds> 1`，将标准输出原样保存为 `/atop/parseable`；raw 模式使用 `atop -w <临时文件> <task_step_seconds> 1`，将原生二进制快照以 Base64 保存为 `/atop/raw`。atop 只随按需 task 启动，后台采样不会启动 atop；task 的有效 `step_seconds` 和采样窗口决定 atop 的采集节奏。仅允许 `/bin/atop`、`/usr/bin/atop`、`/usr/sbin/atop` 或 `/usr/local/bin/atop`，不经过 shell，也不接受其他参数。atop 缺失、退出、超时和截断会进入错误记录；proc/cgroup 原始采集仍独立保留。raw 临时文件必须位于 `storage.path` 内，读取后删除。
 
 调用示例（`DEITYSIGHT_TOKEN` 由调用者设置，不是 agent 的配置入口）：
 
