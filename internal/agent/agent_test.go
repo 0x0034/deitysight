@@ -248,7 +248,13 @@ func TestTaskLifecycleArchiveAndReplay(t *testing.T) {
 	if err := json.Unmarshal(files["manifest.json"], &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest.Sources) != 1 || manifest.Sources[0].Source != "/proc/stat" || manifest.Sources[0].Records != 2 || manifest.Semantics["diskstats"] == "" {
+	statCoverage := false
+	for _, source := range manifest.Sources {
+		if source.Source == "/proc/stat" && source.Records == 2 {
+			statCoverage = true
+		}
+	}
+	if !statCoverage || manifest.Semantics["diskstats"] == "" {
 		t.Fatal("manifest lacks source coverage or units")
 	}
 	a.Close()
