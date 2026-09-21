@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 func TestProcessControlFilter(t *testing.T) {
@@ -79,6 +81,36 @@ func TestProcessControlFilter(t *testing.T) {
 		t.Skip("root launcher required to test cross-UID boundary")
 	}
 	cmd.Env = append(os.Environ(), "DEITYSIGHT_FILTER_TEST=1")
+	if b, e := cmd.CombinedOutput(); e != nil {
+		t.Fatalf("%v\n%s", e, b)
+	}
+}
+
+func TestSavedRootIdentityRejected(t *testing.T) {
+	if os.Getenv("DEITYSIGHT_SAVED_ROOT_TEST") == "1" {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		if e := syscall.Setresuid(65534, 65534, 0); e != nil {
+			t.Fatal(e)
+		}
+		header := struct {
+			Version uint32
+			PID     int32
+		}{Version: 0x20080522}
+		data := [2]struct{ Effective, Permitted, Inheritable uint32 }{}
+		if _, _, e := syscall.RawSyscall(syscall.SYS_CAPSET, uintptr(unsafe.Pointer(&header)), uintptr(unsafe.Pointer(&data)), 0); e != 0 {
+			t.Fatal(e)
+		}
+		if e := ValidateIdentity(); e == nil {
+			t.Fatal("saved root UID accepted")
+		}
+		return
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("root launcher required for saved-UID regression")
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestSavedRootIdentityRejected$")
+	cmd.Env = append(os.Environ(), "DEITYSIGHT_SAVED_ROOT_TEST=1")
 	if b, e := cmd.CombinedOutput(); e != nil {
 		t.Fatalf("%v\n%s", e, b)
 	}
