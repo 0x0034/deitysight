@@ -29,14 +29,14 @@ func RestrictProcessControl() error {
 		tgkill = 234
 		killNR = 62
 		pidfdSignal = 424
-		deny = []uint32{101, 129, 200, 297, 298, 310, 311, 321, 440, 448}
+		deny = []uint32{101, 129, 200, 297, 298, 310, 311, 321, 438, 440, 448}
 	case "arm64":
 		arch = 0xc00000b7
 		seccomp = 277
 		tgkill = 131
 		killNR = 129
 		pidfdSignal = 424
-		deny = []uint32{117, 130, 138, 240, 241, 270, 271, 280, 440, 448}
+		deny = []uint32{117, 130, 138, 240, 241, 270, 271, 280, 438, 440, 448}
 	default:
 		return fmt.Errorf("unsupported sandbox architecture")
 	}
