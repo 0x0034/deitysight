@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const Version = "0.1.0"
+const Version = "1.0.0"
 
 type Request struct {
 	RequestID     string `json:"request_id"`
