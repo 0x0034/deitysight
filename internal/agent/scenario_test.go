@@ -204,3 +204,16 @@ func TestPinnedAtopVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestScenarioMissingRequiredLabelCannotCommit(t *testing.T) {
+    // A syntactically valid SEP must not turn a missing selected scene into success.
+    end := strings.Index(atopFixture, "SEP\n")+4
+    input := atopFixture[:end]
+    for _, label := range []string{"CPU", "PRG", "PRC"} {
+        var lines []string
+        for _, line := range strings.Split(input,"\n") { if !strings.HasPrefix(line,label+" ") { lines=append(lines,line) } }
+        commits:=0
+        err:=ParseAtopStream(strings.NewReader(strings.Join(lines,"\n")),WindowSpec{Scenes:[]string{"cpu"}},4096,func(r Record)error{if r.Kind=="frame_end"{commits++};return nil})
+        if err==nil || commits!=0 { t.Fatalf("missing %s committed",label) }
+    }
+}
