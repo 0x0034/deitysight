@@ -89,6 +89,13 @@ func ValidateIdentity() error {
 	if os.Getuid() == 0 || os.Geteuid() == 0 || os.Getuid() != os.Geteuid() {
 		return fmt.Errorf("run as a dedicated non-root deitysight account")
 	}
+	var real, effective, saved uint32
+	if _, _, e := syscall.RawSyscall(syscall.SYS_GETRESUID, uintptr(unsafe.Pointer(&real)), uintptr(unsafe.Pointer(&effective)), uintptr(unsafe.Pointer(&saved))); e != 0 {
+		return fmt.Errorf("getresuid: %w", e)
+	}
+	if real != effective || saved != effective {
+		return fmt.Errorf("real, effective and saved UIDs must match the dedicated non-root account")
+	}
 	header := struct {
 		Version uint32
 		PID     int32
