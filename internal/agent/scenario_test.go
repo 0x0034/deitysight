@@ -240,6 +240,9 @@ func TestScenarioRecoveryDoesNotCommitCorruptFrame(t *testing.T) {
 	a := openTestAgent(t, c, fixtureCollector{})
 	id := uuid()
 	task := Task{TaskID: id, SchemaVersion: 2}
+	if err := a.store.Mkdir("tasks/" + id); err != nil {
+		t.Fatal(err)
+	}
 	r := Record{SchemaVersion: 2, SampleID: uuid(), Kind: "source", Complete: true}
 	b, _ := jsonBytes(r)
 	r.Kind = "frame_end"
