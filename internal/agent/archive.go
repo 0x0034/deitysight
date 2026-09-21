@@ -3,6 +3,7 @@ package agent
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -357,6 +358,17 @@ func (a *Agent) repair(t *Task, name string) error {
 	}
 	defer a.store.Remove(tmp)
 	scan := bufio.NewScanner(f)
+	if t.SchemaVersion >= 2 {
+		scan.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+			if i := bytes.IndexByte(data, '\n'); i >= 0 {
+				return i + 1, data[:i], nil
+			}
+			if atEOF && len(data) > 0 {
+				return 0, nil, io.ErrUnexpectedEOF
+			}
+			return 0, nil, nil
+		})
+	}
 	scan.Buffer(make([]byte, 64<<10), int(6*(16<<20)+(64<<10)))
 	damaged := false
 	var sources, pendingSources int64
