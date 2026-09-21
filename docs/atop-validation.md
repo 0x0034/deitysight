@@ -12,7 +12,7 @@
 
 ## 自动化验证
 
-- `go test -race -coverprofile=... ./...`：通过；主采集包约 82.5%，本地所有可编译代码总覆盖约 80.9%。macOS 不执行 Linux seccomp 路径。
+- `go test -race -coverprofile=... ./...`：通过；主采集包 82.7%，本地所有可编译代码总覆盖 81.1%。macOS 不执行 Linux seccomp 路径。
 - `go vet ./...`、`git diff --check`：通过。
 - `make build`：Linux amd64、arm64 均通过；R9 实际运行 arm64 构建。
 - R9 Linux 测试二进制：agent 全套、CLI 启停和沙箱测试通过；Linux agent 覆盖约 82.4%。amd64 仅交叉编译，未在 amd64 内核执行 seccomp 回归。
