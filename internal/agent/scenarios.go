@@ -89,6 +89,7 @@ func ParseAtopStream(input io.Reader, spec WindowSpec, limit int, emit func(Reco
 	interval := int64(0)
 	host := ""
 	records := 0
+	seen := map[string]bool{}
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !utf8.ValidString(line) || strings.IndexByte(line, 0) >= 0 {
@@ -102,7 +103,7 @@ func ParseAtopStream(input io.Reader, spec WindowSpec, limit int, emit func(Reco
 			continue
 		}
 		if line == "SEP" {
-			if id == "" || records == 0 {
+			if id == "" || records == 0 || !completeLabels(spec.Scenes, seen) {
 				return errAtopFormat
 			}
 			r := Record{SchemaVersion: 2, SampleID: id, Kind: "frame_end", Source: "atop/SEP", Complete: true, Baseline: baseline, Epoch: epoch, IntervalSeconds: interval, Hostname: host, StartedAt: time.Unix(epoch, 0).UTC(), FinishedAt: time.Now().UTC()}
@@ -111,6 +112,7 @@ func ParseAtopStream(input io.Reader, spec WindowSpec, limit int, emit func(Reco
 			}
 			id = ""
 			records = 0
+			seen = map[string]bool{}
 			baseline = false
 			first = false
 			continue
@@ -250,6 +252,7 @@ func ParseAtopStream(input io.Reader, spec WindowSpec, limit int, emit func(Reco
 				return errAtopFormat
 			}
 		}
+		seen[fields[0]] = true
 		records++
 		if err := emit(r); err != nil {
 			return err
@@ -296,4 +299,30 @@ func scenarioError(err error) string {
 }
 func staticLimitations() []string {
 	return []string{"agent_does_not_compute_metrics", "command_line_removed", "no_process_accounting_short_lived_processes_may_be_missing", "io_await_and_queue_unavailable_in_atop_2.7.1", "process_io_is_not_per_device", "network_process_counters_require_compatible_netatop", "pss_not_collected", "host_boot_id_not_collected", "thread_filter_does_not_reduce_atop_internal_scan"}
+}
+
+// LVM/MDD/DSK may legitimately have no rows on a host with no corresponding
+// devices. Their absence is not proof of zero activity. PSI/PRD/PRN still emit
+// explicit support flags even when their optional kernel facilities are absent.
+func completeLabels(scenes []string, seen map[string]bool) bool {
+	if len(scenes) == 0 {
+		scenes = allScenes
+	}
+	if !seen["PRG"] {
+		return false
+	}
+	required := map[string][]string{
+		"cpu":     {"CPU", "cpu", "CPL", "PRC", "PSI"},
+		"io":      {"PRD", "PSI"},
+		"mem":     {"MEM", "SWP", "PAG", "PRM", "PSI"},
+		"network": {"NET", "PRN"},
+	}
+	for _, s := range scenes {
+		for _, l := range required[s] {
+			if !seen[l] {
+				return false
+			}
+		}
+	}
+	return true
 }

@@ -11,10 +11,16 @@ import (
 
 const atopFixture = "RESET\n" +
 	"CPU host 1700000000 2023/11/14 22:13:20 100 100 4 1 2 3 4 5 6 7 8 9 10 11 12 13\n" +
+	"cpu host 1700000000 2023/11/14 22:13:20 100 100 0 1 2 3 4 5 6 7 8 9 10 11 12 13\n" +
+	"CPL host 1700000000 2023/11/14 22:13:20 100 4 0 0 0 0 0\n" +
+	"PSI host 1700000000 2023/11/14 22:13:20 100 n 0 0 0\n" +
 	"PRG host 1700000000 2023/11/14 22:13:20 100 42 (worker) S 0 0 42 2 0 1699999900 (/bin/worker --password TOP_SECRET (nested)) 1 0 2 0 0 0 0 0 0 0 0 y 0 0 abcdef123456 N\n" +
 	"PRC host 1700000000 2023/11/14 22:13:20 100 42 (worker) S 100 2 3 0 120 0 0 1 0 42 y 0 (0)\n" +
 	"PRC host 1700000000 2023/11/14 22:13:20 100 43 (worker) S 100 2 3 0 120 0 0 1 0 42 n 0 (0)\nSEP\n" +
 	"CPU host 1700000005 2023/11/14 22:13:25 5 100 4 10 20 0 100 0 0 0 0 0 0 0 0 0\n" +
+	"cpu host 1700000005 2023/11/14 22:13:25 5 100 0 1 2 3 4 5 6 7 8 9 10 11 12 13\n" +
+	"CPL host 1700000005 2023/11/14 22:13:25 5 4 0 0 0 0 0\n" +
+	"PSI host 1700000005 2023/11/14 22:13:25 5 n 0 0 0\n" +
 	"PRG host 1700000005 2023/11/14 22:13:25 5 42 (worker) S 0 0 42 2 0 1699999900 (/bin/worker --password TOP_SECRET) 1 0 2 0 0 0 0 0 0 0 0 y 0 0 abcdef123456 N\n" +
 	"PRC host 1700000005 2023/11/14 22:13:25 5 42 (worker) S 100 20 30 0 120 0 0 1 0 42 y 0 (0)\nSEP\n"
 
@@ -46,10 +52,10 @@ func TestScenarioStreamRedactsAndCommitsFrames(t *testing.T) {
 }
 func TestScenarioStreamLargeFrameAndTruncation(t *testing.T) {
 	line := "PRD host 1700000000 2023/11/14 22:13:20 100 42 (worker) S n y 1 2 3 4 0 42 n y\n"
-	input := "RESET\n" + strings.Repeat(line, 16000) + "SEP\n"
+	input := "RESET\n" + strings.Split(atopFixture, "\n")[4] + "\n" + strings.Split(atopFixture, "\n")[5] + "\n" + strings.Repeat(line, 16000) + "SEP\n"
 	n := 0
 	if err := ParseAtopStream(strings.NewReader(input), WindowSpec{Scenes: []string{"io"}}, 4096, func(r Record) error {
-		if r.Kind == "source" {
+		if r.Source == "atop/PRD" {
 			n++
 		}
 		return nil
@@ -122,7 +128,7 @@ func TestScenarioWindowRunsOnce(t *testing.T) {
 		return ParseAtopStream(strings.NewReader(atopFixture), s, 4096, emit)
 	}
 	a := openTestAgent(t, c, col)
-	v, _, err := a.Submit(Request{RequestID: "window"})
+	v, _, err := a.Submit(Request{RequestID: "window", Scenes: []string{"cpu"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +146,7 @@ func TestScenarioManifestAndRecovery(t *testing.T) {
 		return ParseAtopStream(strings.NewReader(atopFixture), s, 4096, emit)
 	}
 	a := openTestAgent(t, c, col)
-	v, _, err := a.Submit(Request{RequestID: "manifest"})
+	v, _, err := a.Submit(Request{RequestID: "manifest", Scenes: []string{"cpu"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,14 +212,25 @@ func TestPinnedAtopVersion(t *testing.T) {
 }
 
 func TestScenarioMissingRequiredLabelCannotCommit(t *testing.T) {
-    // A syntactically valid SEP must not turn a missing selected scene into success.
-    end := strings.Index(atopFixture, "SEP\n")+4
-    input := atopFixture[:end]
-    for _, label := range []string{"CPU", "PRG", "PRC"} {
-        var lines []string
-        for _, line := range strings.Split(input,"\n") { if !strings.HasPrefix(line,label+" ") { lines=append(lines,line) } }
-        commits:=0
-        err:=ParseAtopStream(strings.NewReader(strings.Join(lines,"\n")),WindowSpec{Scenes:[]string{"cpu"}},4096,func(r Record)error{if r.Kind=="frame_end"{commits++};return nil})
-        if err==nil || commits!=0 { t.Fatalf("missing %s committed",label) }
-    }
+	// A syntactically valid SEP must not turn a missing selected scene into success.
+	end := strings.Index(atopFixture, "SEP\n") + 4
+	input := atopFixture[:end]
+	for _, label := range []string{"CPU", "PRG", "PRC"} {
+		var lines []string
+		for _, line := range strings.Split(input, "\n") {
+			if !strings.HasPrefix(line, label+" ") {
+				lines = append(lines, line)
+			}
+		}
+		commits := 0
+		err := ParseAtopStream(strings.NewReader(strings.Join(lines, "\n")), WindowSpec{Scenes: []string{"cpu"}}, 4096, func(r Record) error {
+			if r.Kind == "frame_end" {
+				commits++
+			}
+			return nil
+		})
+		if err == nil || commits != 0 {
+			t.Fatalf("missing %s committed", label)
+		}
+	}
 }
