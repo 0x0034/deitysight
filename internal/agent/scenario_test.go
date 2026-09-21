@@ -340,3 +340,54 @@ func TestScenarioBackgroundPreemptionPreservesHistory(t *testing.T) {
 	}
 	a.Close()
 }
+
+func TestScenarioCoverageIgnoresUncommittedTail(t *testing.T) {
+	a := openTestAgent(t, testConfig(t), fixtureCollector{})
+	id := uuid()
+	if e := a.store.Mkdir("tasks/" + id); e != nil {
+		t.Fatal(e)
+	}
+	r := Record{SchemaVersion: 2, Kind: "source", Source: "atop/CPU", SampleID: uuid(), Complete: true}
+	b, _ := jsonBytes(r)
+	data := append([]byte{}, b...)
+	r.Kind = "frame_end"
+	r.Source = "atop/SEP"
+	b, _ = jsonBytes(r)
+	data = append(data, b...)
+	r.Kind = "source"
+	r.Source = "atop/CPU"
+	r.SampleID = uuid()
+	b, _ = jsonBytes(r)
+	data = append(data, b...)
+	if e := a.store.Append(taskPath(id, "samples.jsonl"), data, false, false); e != nil {
+		t.Fatal(e)
+	}
+	cov, e := a.coverage("tasks/"+id+"/", []string{"samples.jsonl"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, v := range cov {
+		if v.Source == "atop/CPU" && v.Records != 1 {
+			t.Fatalf("tail reported as complete: %+v", v)
+		}
+	}
+}
+
+func TestScenarioHistoryExcludesLegacyEvidence(t *testing.T) {
+	a := openTestAgent(t, testConfig(t), fixtureCollector{})
+	r := Record{SchemaVersion: 1, Kind: "source", Source: "/proc/stat", Content: "legacy", Complete: true, StartedAt: time.Now(), FinishedAt: time.Now()}
+	b, _ := jsonBytes(r)
+	if e := a.store.Append("background/legacy.jsonl", b, false, false); e != nil {
+		t.Fatal(e)
+	}
+	task := Task{SchemaVersion: 2, TaskID: uuid()}
+	if e := a.store.Mkdir("tasks/" + task.TaskID); e != nil {
+		t.Fatal(e)
+	}
+	if e := a.freezeHistory(&task); e != nil {
+		t.Fatal(e)
+	}
+	if task.HistoryRecords != 0 {
+		t.Fatal("v1 evidence copied into v2 history")
+	}
+}
