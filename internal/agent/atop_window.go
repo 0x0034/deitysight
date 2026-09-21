@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"regexp"
 	"runtime"
-	"strings"
 	"time"
 )
 
@@ -109,5 +108,3 @@ func (c *AtopCollector) runStream(ctx context.Context, args []string, emit func(
 	}
 	return waitErr
 }
-
-var _ = strings.Join

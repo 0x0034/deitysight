@@ -133,20 +133,9 @@ func (a *Agent) archive(t *Task) error {
 		return e
 	}
 	manifest, e := jsonBytes(map[string]any{
-		"schema_version": 1, "agent_version": Version, "agent_id": a.id, "host": t.Host, "task": snapshot, "files": files,
-		"sources": sources,
-		"source_semantics": map[string]string{
-			"proc_stat":    "CPU counters use clock_ticks; process stat is thread-group aggregate; task stat is per-thread. Do not add process and thread counters. [PT] fields can be zeroed by ptrace access checks.",
-			"memory":       "proc status Vm* uses kB; stat RSS uses page_size. Threads share an address space: memory is not additive across threads.",
-			"io":           "rchar/wchar count syscall bytes, not storage bytes. read_bytes/write_bytes are storage accounting; process io may include waited-for children and thread-group totals.",
-			"diskstats":    "Sector counters use 512-byte sectors; time counters use milliseconds. Device-level accounting cannot establish per-process causality.",
-			"pressure":     "PSI avg10/avg60/avg300 are percentages; total is microseconds. Fields and full-stall support vary by kernel.",
-			"atop":         "Optional parseable `atop -P ALL <interval> 1` or raw `atop -w <temporary-file> <interval> 1` output. It is an auxiliary snapshot and does not replace raw proc/cgroup records. The agent executes only a fixed atop binary path and fixed arguments; stderr, exit failure and truncation are retained as errors. Raw bytes are Base64 encoded and temporary files are removed after reading.",
-			"wchan":        "Zero is ambiguous: running state, hidden symbol or denied visibility; it does not prove absence of waiting.",
-			"cgroup":       "Raw units are source-defined: v2 cpu.stat usec, cpu.max quota/period usec, memory bytes, io.stat bytes and operation counts; v1 cpuacct.usage ns, cpuacct.stat clock ticks. Ancestors are visible limits only. Hierarchical counters include descendants: do not add parent/child counters or cgroup/process totals.",
-			"identity":     "Correlate agent_id, boot_id, PID, start_time_ticks and TID/thread_start_time_ticks. identity_unstable invalidates this sample's affected object records.",
-			"completeness": "Only visible objects are enumerable. Missing, timeout, truncated and unstable sources are explicit errors. No Top N, ranking, derived load diagnosis or model call.",
-		},
+		"schema_version": max(1, t.SchemaVersion), "agent_version": Version, "agent_id": a.id, "host": t.Host, "task": snapshot, "files": files,
+		"sources":          sources,
+		"source_semantics": semanticsFor(t),
 	})
 	if e != nil {
 		return e
@@ -346,19 +335,30 @@ func (a *Agent) repair(t *Task, name string) error {
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 64<<10), int(6*(16<<20)+(64<<10)))
 	damaged := false
-	var sources int64
+	var sources, pendingSources int64
 	sampleIDs := map[string]bool{}
 	for scan.Scan() {
 		var r Record
-		if json.Unmarshal(scan.Bytes(), &r) != nil || r.SchemaVersion != 1 {
+		if json.Unmarshal(scan.Bytes(), &r) != nil || (r.SchemaVersion != 1 && r.SchemaVersion != 2) {
 			damaged = true
 			continue
 		}
 		if name == "samples.jsonl" {
-			if r.Kind == "source" {
-				sources++
+			if r.SchemaVersion == 2 {
+				if r.Kind == "source" {
+					pendingSources++
+				}
+				if r.Kind == "frame_end" {
+					sources += pendingSources
+					pendingSources = 0
+					sampleIDs[r.SampleID] = true
+				}
+			} else {
+				if r.Kind == "source" {
+					sources++
+				}
+				sampleIDs[r.SampleID] = true
 			}
-			sampleIDs[r.SampleID] = true
 			if t.LastSampleAt == nil || r.FinishedAt.After(*t.LastSampleAt) {
 				v := r.FinishedAt
 				t.LastSampleAt = &v
@@ -398,4 +398,32 @@ func (a *Agent) repair(t *Task, name string) error {
 		return e
 	}
 	return nil
+}
+
+func semanticsFor(t *Task) map[string]string {
+	if t.SchemaVersion >= 2 {
+		return map[string]string{
+			"frames":       "Only records whose sample_id has a subsequent frame_end (SEP) are committed frames. Ignore any incomplete tail. Baseline=true is RESET, cumulative since boot; later frames contain atop interval values. Do not difference interval values again.",
+			"timestamps":   "epoch/interval_seconds are atop observed timestamps and elapsed seconds. Requested step is not actual elapsed time. FinishedAt is agent receive time, not an atomic host observation.",
+			"format":       "atop 2.7.1 parseable labels. PRG command line is replaced by (). No raw binary or unredacted stderr is stored. All other retained values preserve atop units and scope.",
+			"processes":    "Only is_process=y is retained unless include_threads=true. Do not add process totals to thread totals. Match PRG PID and start_time_epoch within each frame; boot_id and full cgroup paths are not collected.",
+			"cpu":          "PRC CPU times use its hertz field. Agent does not calculate rates or utilization.",
+			"io":           "DSK/PRD sectors are 512 bytes. DSK busy is milliseconds, PRD process I/O is not per-device and can include reaped-child accounting. Atop 2.7.1 does not supply await or average queue length.",
+			"memory":       "PRM memory sizes are KiB, its pagesize is bytes. RSS is a point value; growth and faults are interval values. PSS is not requested. Shared memory makes summed RSS non-additive.",
+			"capabilities": "supported=false denotes unavailable PSI or process IO/network counters, not measured zeros. Limitations do not make an otherwise complete basic capture partial.",
+			"history":      "Background uses independent atop sessions. On-demand work preempts background, leaving observable gaps; sample timestamps and baseline flags identify boundaries.",
+		}
+	}
+	return map[string]string{
+		"proc_stat":    "CPU counters use clock_ticks; process stat is thread-group aggregate; task stat is per-thread. Do not add process and thread counters. [PT] fields can be zeroed by ptrace access checks.",
+		"memory":       "proc status Vm* uses kB; stat RSS uses page_size. Threads share an address space: memory is not additive across threads.",
+		"io":           "rchar/wchar count syscall bytes, not storage bytes. read_bytes/write_bytes are storage accounting; process io may include waited-for children and thread-group totals.",
+		"diskstats":    "Sector counters use 512-byte sectors; time counters use milliseconds. Device-level accounting cannot establish per-process causality.",
+		"pressure":     "PSI avg10/avg60/avg300 are percentages; total is microseconds. Fields and full-stall support vary by kernel.",
+		"atop":         "Optional parseable `atop -P ALL <interval> 1` or raw `atop -w <temporary-file> <interval> 1` output. It is an auxiliary snapshot and does not replace raw proc/cgroup records. The agent executes only a fixed atop binary path and fixed arguments; stderr, exit failure and truncation are retained as errors. Raw bytes are Base64 encoded and temporary files are removed after reading.",
+		"wchan":        "Zero is ambiguous: running state, hidden symbol or denied visibility; it does not prove absence of waiting.",
+		"cgroup":       "Raw units are source-defined: v2 cpu.stat usec, cpu.max quota/period usec, memory bytes, io.stat bytes and operation counts; v1 cpuacct.usage ns, cpuacct.stat clock ticks. Ancestors are visible limits only. Hierarchical counters include descendants: do not add parent/child counters or cgroup/process totals.",
+		"identity":     "Correlate agent_id, boot_id, PID, start_time_ticks and TID/thread_start_time_ticks. identity_unstable invalidates this sample's affected object records.",
+		"completeness": "Only visible objects are enumerable. Missing, timeout, truncated and unstable sources are explicit errors. No Top N, ranking, derived load diagnosis or model call.",
+	}
 }

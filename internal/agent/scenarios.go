@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"regexp"
 	"slices"
@@ -68,7 +67,7 @@ func labelsFor(scenes []string) []string {
 }
 
 var errAtopFormat = errors.New("invalid or incomplete atop 2.7.1 stream")
-var processName = regexp.MustCompile(`^\((.*)\) ([A-Za-z]) (.*)$`)
+var processName = regexp.MustCompile(`^\((.{0,15})\) ([A-Za-z]) (.*)$`)
 
 // ParseAtopStream retains at most one bounded line. A source line is usable only
 // if its sample_id has a subsequent frame_end (SEP) commit record. Command lines
@@ -298,5 +297,3 @@ func scenarioError(err error) string {
 func staticLimitations() []string {
 	return []string{"agent_does_not_compute_metrics", "command_line_removed", "no_process_accounting_short_lived_processes_may_be_missing", "io_await_and_queue_unavailable_in_atop_2.7.1", "process_io_is_not_per_device", "network_process_counters_require_compatible_netatop", "pss_not_collected", "host_boot_id_not_collected", "thread_filter_does_not_reduce_atop_internal_scan"}
 }
-
-var _ = fmt.Sprintf
