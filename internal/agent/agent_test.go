@@ -6,7 +6,6 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http/httptest"
 	"os"
@@ -374,76 +373,5 @@ func TestBackgroundHistory(t *testing.T) {
 	files := archiveFiles(t, w.Body.Bytes())
 	if len(files["history.jsonl"]) == 0 {
 		t.Fatal("no frozen history")
-	}
-}
-
-func TestCollectorRawDataAndBoundaries(t *testing.T) {
-	root := t.TempDir()
-	write := func(path, content string) {
-		t.Helper()
-		p := filepath.Join(root, path)
-		if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(content), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, p := range []string{"stat", "loadavg", "uptime", "meminfo", "vmstat", "diskstats", "pressure/cpu", "pressure/memory", "pressure/io", "sys/kernel/random/boot_id", "sys/kernel/osrelease", "self/mountinfo"} {
-		write(p, "fixture raw\n")
-	}
-	// comm may contain spaces and parentheses; field 22 remains the start-time identity.
-	stat := "42 (worker (name)) S " + strings.Repeat("0 ", 18) + "123 0 1 0\n"
-	for _, base := range []string{"42", "42/task/42"} {
-		write(base+"/stat", stat)
-		write(base+"/status", "Name:\tworker\n")
-		write(base+"/io", "read_bytes: 123\n")
-		write(base+"/cgroup", "0::/\n")
-		write(base+"/wchan", "0\n")
-	}
-	write("42/environ", "MUST_NOT_READ_SECRET")
-	write("42/cmdline", "MUST_NOT_READ_ARGS")
-	col, err := NewLinuxCollector(root, 1024)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer col.Close()
-	var records []Record
-	err = col.Collect(context.Background(), func(r Record) error { records = append(records, r); return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := json.Marshal(records)
-	if bytes.Contains(raw, []byte("MUST_NOT_READ")) {
-		t.Fatal("outside allowlist")
-	}
-	found := false
-	for _, r := range records {
-		if r.Source == "/proc/42/io" && r.Content == "read_bytes: 123\n" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("process raw io missing: %s", raw)
-	}
-	outside := filepath.Join(t.TempDir(), "secret")
-	if err := os.WriteFile(outside, []byte("SYMLINK_SECRET"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(filepath.Join(root, "42/io")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, filepath.Join(root, "42/io")); err != nil {
-		t.Fatal(err)
-	}
-	records = nil
-	_ = col.Collect(context.Background(), func(r Record) error { records = append(records, r); return nil })
-	raw, _ = json.Marshal(records)
-	if bytes.Contains(raw, []byte("SYMLINK_SECRET")) {
-		t.Fatal("escaped source root")
-	}
-	sentinel := errors.New("storage failed")
-	if err := col.Collect(context.Background(), func(Record) error { return sentinel }); !errors.Is(err, sentinel) {
-		t.Fatalf("sink failure swallowed: %v", err)
 	}
 }

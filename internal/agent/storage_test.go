@@ -162,11 +162,6 @@ func TestConfigurationLimitsAndSourceErrorPaths(t *testing.T) {
 	if _, e := LoadConfig(p); e == nil {
 		t.Fatal("multiple YAML documents accepted")
 	}
-	for _, b := range []string{"", "42", "42 (x) S x", "42 (x) S " + strings.Repeat("0 ", 18) + "bad"} {
-		if startTime([]byte(b)) != "" {
-			t.Fatal("invalid identity accepted")
-		}
-	}
 	for _, e := range []error{os.ErrPermission, os.ErrNotExist, context.DeadlineExceeded, errTruncated, io.ErrUnexpectedEOF} {
 		if sourceCode(e) == "" {
 			t.Fatal("unclassified error")

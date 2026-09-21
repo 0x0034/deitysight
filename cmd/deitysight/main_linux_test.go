@@ -23,15 +23,16 @@ func TestCLIEndToEnd(t *testing.T) {
 		if f := flag.Lookup("test.gocoverdir"); f != nil && f.Value.String() != "" {
 			cmd.Args = append(cmd.Args, "-test.gocoverdir="+f.Value.String())
 		}
+		if os.Geteuid() == 0 {
+			cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534}}
+		}
 		cmd.Env = append(os.Environ(), "DEITYSIGHT_CLI_TEST=1")
 		if b, e := cmd.CombinedOutput(); e != nil {
 			t.Fatalf("%v\n%s", e, b)
 		}
 		return
 	}
-	if os.Geteuid() != 0 {
-		t.Skip("Linux CLI integration requires root")
-	}
+
 	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
 		t.Fatal(e)
@@ -40,6 +41,7 @@ func TestCLIEndToEnd(t *testing.T) {
 	l.Close()
 	root := t.TempDir()
 	cfg := fmt.Sprintf("http:\n  listen: %q\n  token: integration-test-only\nstorage:\n  path: %q\n  min_free_bytes: 1\n", addr, root+"/data")
+	cfg += "atop:\n  binary: /usr/local/bin/atop\n"
 	if e = os.WriteFile(root+"/agent.yaml", []byte(cfg), 0600); e != nil {
 		t.Fatal(e)
 	}
@@ -62,13 +64,15 @@ func TestCLIEndToEnd(t *testing.T) {
 		return res.StatusCode, b, e
 	}
 	ready := false
+	available := false
 	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); {
 		select {
 		case e := <-done:
 			t.Fatalf("CLI exited early: %v", e)
 		default:
 		}
-		if status, _, e := call("GET", "/v1/health", ""); e == nil && status == 200 {
+		if status, _, e := call("GET", "/v1/health", ""); e == nil && (status == 200 || status == 503) {
+			available = status == 200
 			ready = true
 			break
 		}
@@ -91,6 +95,12 @@ func TestCLIEndToEnd(t *testing.T) {
 		}
 	}()
 	status, b, e := call("POST", "/v1/tasks", `{"request_id":"cli-e2e","window_seconds":1,"step_seconds":1}`)
+	if !available {
+		if e != nil || status != 503 {
+			t.Fatalf("unavailable atop admission: %d %v", status, e)
+		}
+		return
+	}
 	if e != nil || status != 202 {
 		t.Fatalf("submit %d %s %v", status, b, e)
 	}

@@ -258,3 +258,85 @@ func TestScenarioRecoveryDoesNotCommitCorruptFrame(t *testing.T) {
 		t.Fatalf("corrupt frame committed: %+v", task)
 	}
 }
+
+func TestScenarioTimeoutPartialAndNextTask(t *testing.T) {
+	c := testConfig(t)
+	c.Atop.StartupGrace = 0
+	c.Atop.FinishGrace = 0
+	col := NewAtopCollector(c)
+	col.available = nil
+	calls := 0
+	col.run = func(ctx context.Context, _ []string, emit func(Record) error, s WindowSpec) error {
+		calls++
+		input := atopFixture
+		if calls == 1 {
+			input = input[:strings.Index(input, "SEP\n")+4]
+		}
+		if e := ParseAtopStream(strings.NewReader(input), s, 4096, emit); e != nil {
+			return e
+		}
+		if calls == 1 {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		return nil
+	}
+	a := openTestAgent(t, c, col)
+	v, _, e := a.Submit(Request{RequestID: "timeout", Scenes: []string{"cpu"}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	v = terminal(t, a, v.TaskID)
+	if v.State != "partial" || v.SampledPoints != 1 || v.MissedPoints != 1 {
+		t.Fatalf("timeout result: %+v", v)
+	}
+	v, _, e = a.Submit(Request{RequestID: "after-timeout", Scenes: []string{"cpu"}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if v = terminal(t, a, v.TaskID); v.State != "completed" {
+		t.Fatalf("executor still blocked: %+v", v)
+	}
+}
+
+func TestScenarioBackgroundPreemptionPreservesHistory(t *testing.T) {
+	c := testConfig(t)
+	c.Background.Enabled = true
+	c.Background.Step = time.Second
+	col := NewAtopCollector(c)
+	col.available = nil
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	col.run = func(ctx context.Context, _ []string, emit func(Record) error, s WindowSpec) error {
+		if e := ParseAtopStream(strings.NewReader(atopFixture), WindowSpec{Scenes: []string{"cpu"}}, 4096, emit); e != nil {
+			return e
+		}
+		if s.Window == c.Background.Retention {
+			close(started)
+			<-ctx.Done()
+			close(cancelled)
+			return ctx.Err()
+		}
+		return nil
+	}
+	a := openTestAgent(t, c, col)
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("background not started")
+	}
+	v, _, e := a.Submit(Request{RequestID: "preempt", Scenes: []string{"cpu"}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	v = terminal(t, a, v.TaskID)
+	select {
+	case <-cancelled:
+	default:
+		t.Fatal("background not cancelled")
+	}
+	if v.State != "completed" || v.HistoryRecords == 0 {
+		t.Fatalf("history lost: %+v", v)
+	}
+	a.Close()
+}

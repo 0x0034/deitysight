@@ -230,9 +230,7 @@ func (a *Agent) worker() {
 func (a *Agent) collect(step, window time.Duration, taskScoped bool, emit func(Record) error) error {
 	timeout := min(step, a.cfg.Sampling.RoundTimeout)
 	base := a.ctx
-	if taskScoped {
-		base = withTaskSampling(base, window, step)
-	}
+
 	ctx, cancel := context.WithTimeout(base, timeout)
 	defer cancel()
 	a.mu.Lock()
