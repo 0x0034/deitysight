@@ -1,3 +1,5 @@
+> 历史文档：本文描述 schema v1。当前 atop-only schema v2 以 [场景改造](atop-scenario-refactor.md)及根目录 README 为准。
+
 # Linux 数据源核查与采集白名单
 
 核查日期：2026-09-18。本文件依据 Linux 内核文档、man-pages、内核实现及 systemd 官方文档，

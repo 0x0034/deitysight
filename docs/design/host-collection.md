@@ -1,3 +1,5 @@
+> 历史文档：本文描述 schema v1。当前 atop-only schema v2 以 [场景改造](atop-scenario-refactor.md)及根目录 README 为准。
+
 # 主机信息采集设计
 
 本文记录设计讨论中已确认的需求与约束。最终技术设计已于 2026-09-18 确认，首版 agent 已实现；

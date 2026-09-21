@@ -40,8 +40,6 @@ def workload(scene):
                 os.lseek(fd, 0, 0)
                 os.write(fd, data)
                 os.fsync(fd)
-                os.lseek(fd, 0, 0)
-                os.read(fd, 0)  # writes provide process I/O attribution, no cache-only assertion
                 time.sleep(.2)
         finally:
             os.close(fd)

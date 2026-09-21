@@ -1,3 +1,5 @@
+> 历史文档：本文描述 schema v1。当前 atop-only schema v2 以 [场景改造](design/atop-scenario-refactor.md)及根目录 README 为准。
+
 # 首版实施验证
 
 验证日期：2026-09-18（Asia/Shanghai）。项目交付 agent，不包含 server 或模型调用。

@@ -21,6 +21,11 @@ func TestCLIEndToEnd(t *testing.T) {
 	if os.Getenv("DEITYSIGHT_CLI_TEST") != "1" {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestCLIEndToEnd$")
 		if f := flag.Lookup("test.gocoverdir"); f != nil && f.Value.String() != "" {
+			if os.Geteuid() == 0 {
+				if e := os.Chown(f.Value.String(), 65534, 65534); e != nil {
+					t.Fatal(e)
+				}
+			}
 			cmd.Args = append(cmd.Args, "-test.gocoverdir="+f.Value.String())
 		}
 		if os.Geteuid() == 0 {

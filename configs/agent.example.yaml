@@ -23,15 +23,12 @@ sampling:
   max_window: "300s"
   min_step: "1s"
   max_points: 301
-  round_timeout: "2s"
+  # 单行上限；不是一整帧上限，越界会使当前帧无效。
   max_source_bytes: 1048576
 atop:
-  # 可选辅助快照；启用后只执行白名单 atop 路径和固定参数。
-  enabled: false
-  # parseable 保存文本；raw 使用 atop -w 保存原生二进制快照。
+  # 唯一采集源；false 时保留 HTTP，但不接受新任务。
+  enabled: true
   mode: "parseable"
   binary: "/usr/bin/atop"
-  # raw 模式临时文件目录，必须位于 storage.path 内；留空则使用 storage.path。
-  path: "/var/lib/deitysight/atop"
-  # task 采集时使用 task.step_seconds；此值仅作无 task 上下文的默认值。
-  interval: "1s"
+  startup_grace: "10s"
+  finish_grace: "5s"

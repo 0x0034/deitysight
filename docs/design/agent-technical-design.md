@@ -1,3 +1,5 @@
+> 历史文档：本文描述 schema v1。当前 atop-only schema v2 以 [场景改造](atop-scenario-refactor.md)及根目录 README 为准。
+
 # Agent 技术设计
 
 本文件将 [已确认需求](host-collection.md) 转成可实现的接口与存储设计。

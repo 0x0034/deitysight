@@ -3,9 +3,13 @@
 set -eu
 # Select the native build explicitly when the container userspace is emulated.
 install -m 0755 "/src/dist/deitysight-linux-${DEITYSIGHT_TEST_ARCH:-amd64}" /usr/local/bin/deitysight
-install -d -m 0700 /etc/deitysight
+id deitysight >/dev/null 2>&1 || useradd --system --no-create-home --shell /sbin/nologin deitysight
+install -d -m 0750 -o root -g deitysight /etc/deitysight
 sed 's/REPLACE_WITH_DEPLOYMENT_SECRET/integration-only-token/; s/min_free_bytes: 1073741824/min_free_bytes: 1/' /src/configs/agent.example.yaml > /etc/deitysight/agent.yaml
-chmod 0600 /etc/deitysight/agent.yaml
+chown root:deitysight /etc/deitysight/agent.yaml
+chmod 0640 /etc/deitysight/agent.yaml
+# Install atop 2.7.1 at /usr/bin/atop before this check.
+/usr/bin/atop -V
 install -m 0644 /src/deploy/deitysight.service /etc/systemd/system/deitysight.service
 systemd-analyze verify /etc/systemd/system/deitysight.service
 systemctl daemon-reload

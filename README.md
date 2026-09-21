@@ -1,61 +1,60 @@
 # Deitysight
 
-Linux 主机只读采集 agent。保留 CPU、内存、swap、I/O、PSI、可见进程/线程与 cgroup 原始信息，供外部 server 分析。项目不包含 server，也不调用大模型。
-
-需要 Go 1.25+ 构建，支持 Linux amd64/arm64，运行身份为 root。
+Linux 主机调查证据采集 agent，**强依赖 atop 2.7.1**。CPU、IO、内存、网络场景共用一个持续采样窗口；agent 只整理证据，不计算利用率、不排名、不诊断，分析由 server 完成。支持 Linux amd64/arm64，构建需要 Go 1.25+。
 
 ```sh
 make verify
 ```
 
-将对应架构的 `dist/deitysight-linux-*` 安装为 `/usr/local/bin/deitysight`，复制 `configs/agent.example.yaml` 为 `/etc/deitysight/agent.yaml`，设置真实 token，配置文件权限设为 `0600`。手动启动：
+部署使用专用非 root `deitysight` 账号。该 UID 只能运行 agent 和采集子进程，不能复用于业务进程。安装固定版本 atop 的普通可执行文件（不设置 setuid、不启用会计或探针），并确认 `atop -V` 为 2.7.1。不同版本不会自动兼容。
 
 ```sh
-/usr/local/bin/deitysight --config /etc/deitysight/agent.yaml
+useradd --system --no-create-home --shell /sbin/nologin deitysight
+install -m 0755 dist/deitysight-linux-arm64 /usr/local/bin/deitysight
+install -d -m 0750 -o root -g deitysight /etc/deitysight
+install -m 0640 -o root -g deitysight configs/agent.example.yaml /etc/deitysight/agent.yaml
+# 编辑配置，替换 token，并设置正确的 atop binary。
+install -m 0644 deploy/deitysight.service /etc/systemd/system/deitysight.service
+systemctl daemon-reload
+systemctl enable --now deitysight
 ```
 
-systemd 模板位于 `deploy/deitysight.service`。修改存储路径时同时调整 `ReadWritePaths` 与 `StateDirectory`；安装单元后执行 `systemctl daemon-reload`、`systemctl enable --now deitysight`。默认使用 0.2 核 CPU 配额、256 MiB 内存上限。已在 systemd 252 测试模板；其他版本需按验证文档检查。
+按机器架构选择安装文件。升级已有 root 部署前先停止服务，将专用存储目录及已有文件的所有者改为 `deitysight:deitysight`，配置保留 root 所有、deitysight 组可读；再替换服务单元。已有归档保持原内容，v1 下载不受格式升级影响。新任务只产生 schema v2，不混入旧版后台历史。
 
-二进制启动时安装作用于所有线程的 seccomp 过滤器，禁止跨进程信号、ptrace、进程内存系统调用及动态探针，保留 Go 运行时的自身线程信号。内核必须支持 seccomp TSYNC，不支持时拒绝启动。文件系统保护由 systemd 模板提供；手动运行不会自动创建只读挂载命名空间。
+systemd 将 agent 和 atop 合计限制为 1 CPU、1 GiB 内存，磁盘默认预算 1 GiB。服务仅授予 `CAP_DAC_READ_SEARCH`、`CAP_SYS_PTRACE`，不授予 `CAP_KILL`。二进制安装 TSYNC seccomp，禁止 ptrace、进程内存操作、动态探针和外部线程信号；仅允许用于探测的 signal 0 及用于回收的 SIGKILL，再由内核 UID 权限检查隔离业务进程。root 或超出允许范围的能力集会被拒绝。文件系统只读保护依赖服务单元，直接运行二进制不会创建这些挂载限制。
 
-配置启动时加载。默认监听 `127.0.0.1:19100`，需要远程 server 访问时改为管理网地址。HTTP 使用 Bearer token，按已确认设计不提供 TLS。示例 token 会被启动校验拒绝。
-
-`background.enabled: false` 时仅按需采集；设为 `true` 后以 `background.step` 低频采样。任务保存自身的历史副本。数据写入 `storage.path`，结果保留 24 小时，任务与幂等记录保留 7 天；预算计入原始文件、归档、临时文件和下载中的文件。
-
-可选启用 atop 快照：
-
-```yaml
-atop:
-  enabled: true
-  mode: "raw"
-  binary: "/usr/bin/atop"
-  path: "/var/lib/deitysight/atop"
-  interval: "1s"
-```
-
-parseable 模式每个 task 采样轮次使用固定参数执行 `atop -P ALL <task_step_seconds> 1`，将标准输出原样保存为 `/atop/parseable`；raw 模式使用 `atop -w <临时文件> <task_step_seconds> 1`，将原生二进制快照以 Base64 保存为 `/atop/raw`。atop 只随按需 task 启动，后台采样不会启动 atop；task 的有效 `step_seconds` 和采样窗口决定 atop 的采集节奏。仅允许 `/bin/atop`、`/usr/bin/atop`、`/usr/sbin/atop` 或 `/usr/local/bin/atop`，不经过 shell，也不接受其他参数。atop 缺失、退出、超时和截断会进入错误记录；proc/cgroup 原始采集仍独立保留。raw 临时文件必须位于 `storage.path` 内，读取后删除。
-
-调用示例（`DEITYSIGHT_TOKEN` 由调用者设置，不是 agent 的配置入口）：
+所有接口均需 Bearer token。默认仅监听 `127.0.0.1:19100`；远程访问可改为管理网地址。配置启动时读取，修改后重启。配置文件、存储路径和旧版迁移字段见 [配置说明](configs/README.md)。
 
 ```sh
-curl -H "Authorization: Bearer $DEITYSIGHT_TOKEN" \
+curl --fail -H "Authorization: Bearer $DEITYSIGHT_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"request_id":"investigation-0001","window_seconds":30,"step_seconds":5}' \
+  -d '{"request_id":"investigation-0001","window_seconds":30,"step_seconds":5,"scenes":["cpu","io","mem","network"],"include_threads":false}' \
   http://127.0.0.1:19100/v1/tasks
 
-curl -H "Authorization: Bearer $DEITYSIGHT_TOKEN" \
+curl --fail -H "Authorization: Bearer $DEITYSIGHT_TOKEN" \
   http://127.0.0.1:19100/v1/tasks/TASK_ID
 
 curl --fail -H "Authorization: Bearer $DEITYSIGHT_TOKEN" \
   -o result.tar.gz http://127.0.0.1:19100/v1/tasks/TASK_ID/result
 ```
 
-窗口/步长可省略，默认 30s/5s，包含起点和终点（共 7 轮）。同一 `request_id` 重试返回原任务；不同参数返回 409。同一时间只接受一个按需任务。所有接口（含 `/v1/health`）均需鉴权。
+`scenes` 省略时选全部四类；不接受空数组、重复项或未知场景。默认保存全部可见进程，`include_threads=true` 才保留线程记录，不做 Top N。该过滤不能降低 atop 内部扫描线程的成本。幂等键仍为 `request_id`，场景顺序不影响幂等匹配；参数变化返回 409，同一时间只接受一个任务。
 
-结果为 `tar.gz`：`manifest.json`、`samples.jsonl`、`errors.jsonl`，开启后台采样时还包含 `history.jsonl`。manifest 提供身份、有效参数、时间覆盖、计数语义和数据文件 SHA-256；归档本身 SHA-256 通过 ETag 返回。源数据非 UTF-8 时使用 Base64。
+默认窗口 30s、步长 5s，计划包含 RESET 基线及 6 个区间帧。实际时刻与间隔以 atop 输出为准，延迟时不会无限等到凑齐帧数。一个任务只启动一个 atop 会话，默认最多等待窗口加 10s 启动、5s 收尾宽限。子进程被取消后回收，后续任务可以继续执行。
 
-每轮有软时间预算，每数据源有字节上限。权限限制、进程退出、身份变化、超时、截断与丢点均作为缺失报告，不会补成零或推断根因。`completed` 表示本次计划采集未报告缺失，不保证内核暴露了所有主机对象。容器部署仅能看到所在命名空间，因此建议在宿主机部署。
+结果为 `tar.gz`，包含 `manifest.json`、`samples.jsonl`、`errors.jsonl`，启用后台历史时另有 `history.jsonl`。manifest 和下载 ETag 提供 SHA-256。**只使用有对应 `frame_end`（SEP）的记录**；尾部未提交帧不能作为完整证据。首帧 `baseline=true` 是启动以来累计量，后续帧是 atop 的区间值，不能再次差分。PRG 命令行在任何落盘前替换为 `()`；不保留原生 raw 或 stderr。
 
-采集仅访问固定内核数据源；不读取命令行参数、环境变量、进程内存或业务文件正文。除白名单中的 atop 直接执行外，不执行 shell 或其他外部命令。进程聚合计数与线程计数不能累加，线程内存共享，`wchan=0` 也不能证明没有等待。任务因 agent 重启而中断时只恢复已有证据，不继续补采。元数据损坏会暂停新任务准入。
+| 场景 | 证据 | 边界 |
+| --- | --- | --- |
+| CPU | CPU、每核 cpu、CPL、PRC、PSI | server 根据 hertz 和实际 interval 解读 CPU 时间 |
+| IO | DSK、LVM、MDD、PRD、PSI | 无独立读写 await、平均队列；进程 I/O 不是按设备拆分 |
+| MEM | MEM、SWP、PAG、PRM、PSI | 不采 PSS；共享内存使进程 RSS 不可简单相加 |
+| network | NET、PRN | 没有可用插件时只能提供主机/接口数据，进程计数不可当成零 |
 
-详细协议与边界见 [技术设计](docs/design/agent-technical-design.md)、[数据源说明](docs/design/linux-data-sources.md)；验证证据见 [实施验证](docs/implementation-validation.md)。
+`capabilities` 和每条记录的 `supported` 区分能力不可用与实际零值。基础证据完整、但可选能力缺失时仍可 `completed`；超时、损坏、截断或丢帧为 `partial`，没有可用完整帧为 `failed`。atop 缺失、禁用、配置 raw 或版本不支持时，`/v1/health` 返回 503，新任务被拒绝；任务查询和旧归档下载继续可用。安装或修复 atop 后重启 agent 重新探测。
+
+`ATOPACCT=''` 禁用系统进程会计，采样间退出的短命进程可能不可见。agent 不安装/加载网络探针；传统 netatop 可能因服务权限不可用，不自动扩权。PRG 仅提供 atop 可见的容器标识，不包含完整 cgroup、Pod 归属或 host boot ID。
+
+后台默认关闭；开启后以默认 30s 步长保留 10m 证据。按需任务取消后台会话并冻结完整历史帧，结束后重开后台会话。历史有会话和任务造成的空隙，`history_reason`、基线和时间戳明确其非连续性，不承诺全窗口覆盖。
+
+设计依据见 [场景改造](docs/design/atop-scenario-refactor.md)，实测结果与限制见 [atop 验证](docs/atop-validation.md)。旧版技术设计和验证文件仅描述 schema v1。
