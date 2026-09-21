@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
-Group=root
+User=deitysight
+Group=deitysight
 ExecStart=/usr/local/bin/deitysight --config /etc/deitysight/agent.yaml
 Restart=on-failure
 RestartSec=5s
@@ -37,13 +37,14 @@ RestrictNamespaces=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 # ptrace visibility checks need this capability; actual attach/read/write syscalls are denied.
 CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
 SystemCallFilter=~@mount @reboot @swap @module @raw-io @obsolete @debug @keyring
-SystemCallFilter=~kill tkill pidfd_send_signal process_vm_readv process_vm_writev process_madvise
+SystemCallFilter=~tkill process_vm_readv process_vm_writev process_madvise
 SystemCallFilter=~bpf perf_event_open kexec_load kexec_file_load open_by_handle_at
 SystemCallErrorNumber=EPERM
 # The binary's TSYNC seccomp filter allows tgkill only to its own thread group.
-CPUQuota=20%
-MemoryMax=256M
+CPUQuota=100%
+MemoryMax=1G
 TasksMax=64
 LimitNOFILE=1024
 StandardOutput=journal

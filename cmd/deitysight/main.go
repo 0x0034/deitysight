@@ -34,8 +34,8 @@ func run() error {
 	if runtime.GOOS != "linux" {
 		return errors.New("deitysight requires Linux")
 	}
-	if os.Geteuid() != 0 {
-		return errors.New("deitysight must run as root")
+	if err := sandbox.ValidateIdentity(); err != nil {
+		return err
 	}
 	cfg, err := agent.LoadConfig(*config)
 	if err != nil {
@@ -44,15 +44,8 @@ func run() error {
 	if err := sandbox.RestrictProcessControl(); err != nil {
 		return err
 	}
-	atop := cfg.Atop
-	if atop.Mode == "raw" && atop.Path == "" {
-		atop.Path = cfg.Storage.Path
-	}
-	collector, err := agent.NewLinuxCollectorWithAtop("/proc", cfg.Sampling.MaxSourceBytes, atop)
-	if err != nil {
-		return err
-	}
-	defer collector.Close()
+	collector := agent.NewAtopCollector(cfg)
+	collector.Probe(context.Background())
 	a, err := agent.New(cfg, collector)
 	if err != nil {
 		return err
