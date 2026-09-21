@@ -234,3 +234,18 @@ func TestScenarioMissingRequiredLabelCannotCommit(t *testing.T) {
 		}
 	}
 }
+
+func TestScenarioRecoveryDoesNotCommitCorruptFrame(t *testing.T) {
+    c:=testConfig(t)
+    a:=openTestAgent(t,c,fixtureCollector{})
+    id:=uuid()
+    task:=Task{TaskID:id,SchemaVersion:2}
+    r:=Record{SchemaVersion:2,SampleID:uuid(),Kind:"source",Complete:true}
+    b,_:=jsonBytes(r)
+    r.Kind="frame_end"
+    end,_:=jsonBytes(r)
+    data:=append(append(b,[]byte("broken\n")...),end...)
+    if e:=a.store.Append(taskPath(id,"samples.jsonl"),data,false,false);e!=nil{t.Fatal(e)}
+    if e:=a.repair(&task,"samples.jsonl");e!=nil{t.Fatal(e)}
+    if task.SampledPoints!=0 || task.SourceRecords!=0 {t.Fatalf("corrupt frame committed: %+v",task)}
+}
