@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -129,4 +130,64 @@ func TestScenarioWindowRunsOnce(t *testing.T) {
 	if task.State != "completed" || calls != 1 || task.SampledPoints != 2 {
 		t.Fatalf("calls=%d task=%+v", calls, task)
 	}
+}
+
+func TestScenarioManifestAndRecovery(t *testing.T) {
+	c := testConfig(t)
+	col := NewAtopCollector(c)
+	col.available = nil
+	col.run = func(ctx context.Context, _ []string, emit func(Record) error, s WindowSpec) error {
+		return ParseAtopStream(strings.NewReader(atopFixture), s, 4096, emit)
+	}
+	a := openTestAgent(t, c, col)
+	v, _, err := a.Submit(Request{RequestID: "manifest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v = terminal(t, a, v.TaskID)
+	w := request(t, a, "GET", v.Result.URL, "", c.HTTP.Token)
+	files := archiveFiles(t, w.Body.Bytes())
+	var manifest map[string]any
+	if err := json.Unmarshal(files["manifest.json"], &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest["schema_version"] != float64(2) {
+		t.Fatal("manifest still advertises legacy schema")
+	}
+	if !strings.Contains(string(files["manifest.json"]), "frame_end") {
+		t.Fatal("frame commit semantics missing")
+	}
+	if strings.Contains(string(files["manifest.json"]), "proc_stat") {
+		t.Fatal("manifest falsely claims proc evidence")
+	}
+	a.mu.Lock()
+	v.State = "running"
+	v.Phase = "sampling"
+	v.EndedAt = nil
+	v.Result = Result{}
+	a.tasks[v.TaskID] = v
+	err = a.persist(v)
+	a.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Close()
+	b := openTestAgent(t, c, col)
+	recovered, err := b.Get(v.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.State != "interrupted" || recovered.SampledPoints != 2 || recovered.SourceRecords == 0 {
+		t.Fatalf("v2 frames lost in recovery: %+v", recovered)
+	}
+}
+func TestScenarioRedactionCannotBeMovedIntoName(t *testing.T) {
+	attack := strings.Replace(atopFixture, "/bin/worker --password TOP_SECRET (nested)", "TOP_SECRET) S 0 0 42 2 0 1699999900 (other", 1)
+	err := ParseAtopStream(strings.NewReader(attack), WindowSpec{Scenes: []string{"cpu"}}, 4096, func(r Record) error {
+		if strings.Contains(r.Content, "TOP_SECRET") {
+			t.Fatal("command became a process name")
+		}
+		return nil
+	})
+	_ = err // rejecting ambiguous data is also safe
 }
