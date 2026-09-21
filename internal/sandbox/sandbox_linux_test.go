@@ -5,6 +5,7 @@ package sandbox
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
@@ -19,6 +20,29 @@ func TestProcessControlFilter(t *testing.T) {
 		}
 		if e := syscall.Kill(os.Getppid(), syscall.SIGKILL); e != syscall.EPERM {
 			t.Fatalf("external kill allowed: %v", e)
+		}
+		if _, _, e := syscall.RawSyscall(438, ^uintptr(0), 0, 0); e != syscall.EPERM {
+			t.Fatalf("pidfd_getfd not blocked: %v", e)
+		}
+		// Both true pidfds and Linux 5.10 /proc/PID directory FDs must respect UID isolation.
+		fd, _, pe := syscall.RawSyscall(434, uintptr(os.Getppid()), 0, 0)
+		if pe == 0 {
+			_, _, se := syscall.RawSyscall6(424, fd, 0, 0, 0, 0, 0)
+			syscall.Close(int(fd))
+			if se != syscall.EPERM {
+				t.Fatalf("cross-UID pidfd signal allowed: %v", se)
+			}
+		} else if pe != syscall.ENOSYS {
+			t.Fatal(pe)
+		}
+		dir, err := os.Open(fmt.Sprintf("/proc/%d", os.Getppid()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, se := syscall.RawSyscall6(424, dir.Fd(), 0, 0, 0, 0, 0)
+		dir.Close()
+		if se != syscall.EPERM && se != syscall.EBADF {
+			t.Fatalf("proc directory signal allowed: %v", se)
 		}
 		if e := syscall.Tgkill(os.Getppid(), os.Getppid(), 0); e != syscall.EPERM {
 			t.Fatalf("external tgkill allowed: %v", e)
@@ -42,6 +66,11 @@ func TestProcessControlFilter(t *testing.T) {
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestProcessControlFilter$")
 	if f := flag.Lookup("test.gocoverdir"); f != nil && f.Value.String() != "" {
+		if os.Geteuid() == 0 {
+			if e := os.Chown(f.Value.String(), 65534, 65534); e != nil {
+				t.Fatal(e)
+			}
+		}
 		cmd.Args = append(cmd.Args, "-test.gocoverdir="+f.Value.String())
 	}
 	if os.Geteuid() == 0 {
