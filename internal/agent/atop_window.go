@@ -34,7 +34,7 @@ func (c *AtopCollector) Probe(ctx context.Context) {
 	b := &limitedVersionBuffer{}
 	cmd.Stdout = b
 	cmd.Stderr = b
-	if err := cmd.Run(); err != nil || !regexp.MustCompile(`(?m)\bversion:?[ \t]+2\.7\.1(?:[ \t\r\n]|$)`).MatchString(b.text) {
+	if err := cmd.Run(); err != nil || !supportedAtopVersion(b.text) {
 		c.available = errors.New("atop 2.7.1 required")
 		return
 	}
@@ -107,4 +107,8 @@ func (c *AtopCollector) runStream(ctx context.Context, args []string, emit func(
 		return parseErr
 	}
 	return waitErr
+}
+
+func supportedAtopVersion(s string) bool {
+	return regexp.MustCompile(`(?im)^version:?[ \t]+2\.7\.1(?:[ \t\r\n]|$)`).MatchString(s)
 }
