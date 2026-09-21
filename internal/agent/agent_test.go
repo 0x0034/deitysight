@@ -359,6 +359,7 @@ func TestBackgroundHistory(t *testing.T) {
 	c := testConfig(t)
 	c.Background.Enabled = true
 	c.Background.Step = 20 * time.Millisecond
+	c.Atop.Enabled = false // legacy generic collector timing contract
 	a := openTestAgent(t, c, fixtureCollector{})
 	time.Sleep(90 * time.Millisecond)
 	task, _, err := a.Submit(Request{RequestID: "history"})

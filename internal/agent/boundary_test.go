@@ -153,6 +153,7 @@ func TestBackgroundContinuesThroughOnDemand(t *testing.T) {
 	c := testConfig(t)
 	c.Background.Enabled = true
 	c.Background.Step = 30 * time.Millisecond
+	c.Atop.Enabled = false // legacy generic collector timing contract
 	f := &controlledCollector{}
 	a := openTestAgent(t, c, f)
 	task, _, e := a.Submit(Request{RequestID: "background"})
@@ -233,6 +234,7 @@ func TestBackgroundMustNotExtendTaskWindow(t *testing.T) {
 	c := testConfig(t)
 	c.Background.Enabled = true
 	c.Background.Step = 100 * time.Millisecond
+	c.Atop.Enabled = false // legacy generic collector timing contract
 	c.Sampling.RoundTimeout = 20 * time.Millisecond
 	a := openTestAgent(t, c, &secondSlowCollector{})
 	task, _, e := a.Submit(Request{RequestID: "background-stall"})

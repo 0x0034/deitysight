@@ -46,8 +46,8 @@ type SamplingConfig struct {
 	MaxSourceBytes int64         `yaml:"max_source_bytes"`
 }
 
-// AtopConfig enables a fixed parseable or raw `atop` invocation. The agent
-// never invokes a shell and does not accept arbitrary executable paths.
+// AtopConfig controls the pinned parseable collector. Path and Interval are
+// accepted only for legacy configuration migration; raw collection is unavailable.
 type AtopConfig struct {
 	StartupGrace time.Duration `yaml:"startup_grace"`
 	FinishGrace  time.Duration `yaml:"finish_grace"`
@@ -111,6 +111,9 @@ func (c Config) Validate() error {
 	if c.Background.Step <= 0 || c.Background.Retention <= 0 {
 		return errors.New("background timing must be positive")
 	}
+	if c.Atop.Enabled && c.Background.Enabled && (c.Background.Step%time.Second != 0 || c.Background.Retention%time.Second != 0 || c.Background.Step > c.Background.Retention) {
+		return errors.New("atop background requires whole seconds and step <= retention")
+	}
 	if c.Atop.StartupGrace < 0 || c.Atop.StartupGrace > time.Minute || c.Atop.FinishGrace < 0 || c.Atop.FinishGrace > time.Minute {
 		return errors.New("invalid atop grace")
 	}
@@ -129,8 +132,8 @@ func (c Config) Validate() error {
 		}
 	}
 	s := c.Sampling
-	if s.MinStep <= 0 || s.MaxWindow <= 0 || s.MaxPoints < 2 || s.MaxPoints > 1000000 || s.RoundTimeout <= 0 || s.MaxSourceBytes <= 0 || s.MaxSourceBytes > 16<<20 {
-		return errors.New("invalid sampling limits (source limit must be <= 16 MiB)")
+	if s.MinStep <= 0 || s.MaxWindow <= 0 || s.MaxPoints < 2 || s.MaxPoints > 1000000 || s.RoundTimeout <= 0 || s.MaxSourceBytes < 256 || s.MaxSourceBytes > 16<<20 {
+		return errors.New("invalid sampling limits (source line limit must be 256 bytes to 16 MiB)")
 	}
 	return c.validateSampling(s.DefaultWindow, s.DefaultStep)
 }
