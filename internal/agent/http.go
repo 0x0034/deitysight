@@ -53,6 +53,16 @@ func parseRequest(b []byte) (Request, error) {
 			return r, bad
 		}
 		switch key {
+		case "scenes":
+			if json.Unmarshal(raw, &r.Scenes) != nil {
+				return r, bad
+			}
+		case "include_threads":
+			var v bool
+			if json.Unmarshal(raw, &v) != nil {
+				return r, bad
+			}
+			r.IncludeThreads = &v
 		case "request_id":
 			if json.Unmarshal(raw, &r.RequestID) != nil {
 				return r, bad
@@ -159,10 +169,17 @@ func (a *Agent) health(w http.ResponseWriter) {
 	storageOK := a.store.Available() == nil
 	stalled := !a.roundDeadline.IsZero() && time.Now().After(a.roundDeadline)
 	status := 200
+	atopOK := true
+	if c, ok := a.collector.(windowCollector); ok {
+		atopOK = c.Available() == nil
+	}
+	if !atopOK {
+		status = 503
+	}
 	if a.degraded || stalled || a.ctx.Err() != nil {
 		status = 503
 	}
-	writeJSON(w, status, map[string]any{"agent_id": a.id, "version": Version, "recovery_ok": !a.degraded, "storage_available": storageOK, "collector_stalled": stalled, "active_task_id": a.active, "background_enabled": a.cfg.Background.Enabled, "background_paused": a.paused || !storageOK, "accepting_tasks": status == 200 && storageOK && a.active == ""})
+	writeJSON(w, status, map[string]any{"atop_available": atopOK, "agent_id": a.id, "version": Version, "recovery_ok": !a.degraded, "storage_available": storageOK, "collector_stalled": stalled, "active_task_id": a.active, "background_enabled": a.cfg.Background.Enabled, "background_paused": a.paused || !storageOK, "accepting_tasks": status == 200 && storageOK && a.active == ""})
 }
 func (a *Agent) download(w http.ResponseWriter, r *http.Request, id string) {
 	a.mu.Lock()

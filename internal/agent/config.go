@@ -49,11 +49,13 @@ type SamplingConfig struct {
 // AtopConfig enables a fixed parseable or raw `atop` invocation. The agent
 // never invokes a shell and does not accept arbitrary executable paths.
 type AtopConfig struct {
-	Enabled  bool          `yaml:"enabled"`
-	Mode     string        `yaml:"mode"`
-	Binary   string        `yaml:"binary"`
-	Path     string        `yaml:"path"`
-	Interval time.Duration `yaml:"interval"`
+	StartupGrace time.Duration `yaml:"startup_grace"`
+	FinishGrace  time.Duration `yaml:"finish_grace"`
+	Enabled      bool          `yaml:"enabled"`
+	Mode         string        `yaml:"mode"`
+	Binary       string        `yaml:"binary"`
+	Path         string        `yaml:"path"`
+	Interval     time.Duration `yaml:"interval"`
 }
 
 func DefaultConfig() Config {
@@ -62,7 +64,7 @@ func DefaultConfig() Config {
 		Storage:    StorageConfig{Path: "/var/lib/deitysight", ResultRetention: 24 * time.Hour, TaskRetention: 7 * 24 * time.Hour, MaxBytes: 1 << 30, MinFreeBytes: 1 << 30},
 		Background: BackgroundConfig{Step: 30 * time.Second, Retention: 10 * time.Minute},
 		Sampling:   SamplingConfig{DefaultWindow: 30 * time.Second, DefaultStep: 5 * time.Second, MaxWindow: 300 * time.Second, MinStep: time.Second, MaxPoints: 301, RoundTimeout: 2 * time.Second, MaxSourceBytes: 1 << 20},
-		Atop:       AtopConfig{Mode: "parseable", Binary: "/usr/bin/atop", Interval: time.Second},
+		Atop:       AtopConfig{Enabled: true, StartupGrace: 10 * time.Second, FinishGrace: 5 * time.Second, Mode: "parseable", Binary: "/usr/bin/atop", Interval: time.Second},
 	}
 }
 func LoadConfig(path string) (Config, error) {
@@ -108,6 +110,9 @@ func (c Config) Validate() error {
 	}
 	if c.Background.Step <= 0 || c.Background.Retention <= 0 {
 		return errors.New("background timing must be positive")
+	}
+	if c.Atop.StartupGrace < 0 || c.Atop.StartupGrace > time.Minute || c.Atop.FinishGrace < 0 || c.Atop.FinishGrace > time.Minute {
+		return errors.New("invalid atop grace")
 	}
 	if c.Atop.Enabled {
 		if !allowedAtopBinary(c.Atop.Binary) || (c.Atop.Mode != "parseable" && c.Atop.Mode != "raw") || c.Atop.Interval <= 0 || c.Atop.Interval > 60*time.Second || c.Atop.Interval%time.Second != 0 {

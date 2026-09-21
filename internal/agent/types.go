@@ -11,9 +11,11 @@ import (
 const Version = "1.0.0"
 
 type Request struct {
-	RequestID     string `json:"request_id"`
-	WindowSeconds *int64 `json:"window_seconds,omitempty"`
-	StepSeconds   *int64 `json:"step_seconds,omitempty"`
+	Scenes         []string `json:"scenes,omitempty"`
+	IncludeThreads *bool    `json:"include_threads,omitempty"`
+	RequestID      string   `json:"request_id"`
+	WindowSeconds  *int64   `json:"window_seconds,omitempty"`
+	StepSeconds    *int64   `json:"step_seconds,omitempty"`
 }
 type Result struct {
 	Available bool   `json:"available"`
@@ -27,34 +29,48 @@ type ErrorCount struct {
 	Count int    `json:"count"`
 }
 type Task struct {
-	Host              map[string]any `json:"host"`
-	TaskID            string         `json:"task_id"`
-	RequestID         string         `json:"request_id"`
-	State             string         `json:"state"`
-	Phase             string         `json:"phase"`
-	WindowSeconds     int64          `json:"window_seconds"`
-	StepSeconds       int64          `json:"step_seconds"`
-	PlannedPoints     int            `json:"planned_points"`
-	SampledPoints     int            `json:"sampled_points"`
-	MissedPoints      int            `json:"missed_points"`
-	SourceRecords     int64          `json:"source_records"`
-	ReceivedAt        time.Time      `json:"received_at"`
-	StartedAt         *time.Time     `json:"started_at"`
-	LastSampleAt      *time.Time     `json:"last_sample_at"`
-	EndedAt           *time.Time     `json:"ended_at"`
-	ResultExpiresAt   *time.Time     `json:"result_expires_at"`
-	TaskExpiresAt     *time.Time     `json:"task_expires_at"`
-	Result            Result         `json:"result"`
-	Errors            []ErrorCount   `json:"errors"`
-	BackgroundEnabled bool           `json:"background_enabled"`
-	HistoryStartedAt  *time.Time     `json:"history_started_at"`
-	HistoryEndedAt    *time.Time     `json:"history_ended_at"`
-	HistoryRecords    int64          `json:"history_records"`
-	HistoryReason     string         `json:"history_reason,omitempty"`
+	SchemaVersion     int             `json:"schema_version,omitempty"`
+	Scenes            []string        `json:"scenes,omitempty"`
+	IncludeThreads    bool            `json:"include_threads"`
+	Capabilities      map[string]bool `json:"capabilities,omitempty"`
+	Limitations       []string        `json:"limitations,omitempty"`
+	Host              map[string]any  `json:"host"`
+	TaskID            string          `json:"task_id"`
+	RequestID         string          `json:"request_id"`
+	State             string          `json:"state"`
+	Phase             string          `json:"phase"`
+	WindowSeconds     int64           `json:"window_seconds"`
+	StepSeconds       int64           `json:"step_seconds"`
+	PlannedPoints     int             `json:"planned_points"`
+	SampledPoints     int             `json:"sampled_points"`
+	MissedPoints      int             `json:"missed_points"`
+	SourceRecords     int64           `json:"source_records"`
+	ReceivedAt        time.Time       `json:"received_at"`
+	StartedAt         *time.Time      `json:"started_at"`
+	LastSampleAt      *time.Time      `json:"last_sample_at"`
+	EndedAt           *time.Time      `json:"ended_at"`
+	ResultExpiresAt   *time.Time      `json:"result_expires_at"`
+	TaskExpiresAt     *time.Time      `json:"task_expires_at"`
+	Result            Result          `json:"result"`
+	Errors            []ErrorCount    `json:"errors"`
+	BackgroundEnabled bool            `json:"background_enabled"`
+	HistoryStartedAt  *time.Time      `json:"history_started_at"`
+	HistoryEndedAt    *time.Time      `json:"history_ended_at"`
+	HistoryRecords    int64           `json:"history_records"`
+	HistoryReason     string          `json:"history_reason,omitempty"`
 }
 
 func (t Task) clone() Task {
 	t.Errors = append([]ErrorCount{}, t.Errors...)
+	t.Scenes = append([]string(nil), t.Scenes...)
+	t.Limitations = append([]string(nil), t.Limitations...)
+	if t.Capabilities != nil {
+		cp := map[string]bool{}
+		for k, v := range t.Capabilities {
+			cp[k] = v
+		}
+		t.Capabilities = cp
+	}
 	host := map[string]any{}
 	for k, v := range t.Host {
 		host[k] = v
@@ -81,6 +97,7 @@ func (t *Task) addError(code string) {
 }
 
 type Object struct {
+	StartEpoch      string `json:"start_time_epoch,omitempty"`
 	PID             int    `json:"pid,omitempty"`
 	TID             int    `json:"tid,omitempty"`
 	StartTime       string `json:"start_time_ticks,omitempty"`
@@ -89,20 +106,26 @@ type Object struct {
 	ContainerID     string `json:"container_id,omitempty"`
 }
 type Record struct {
-	BootID        string    `json:"boot_id,omitempty"`
-	SchemaVersion int       `json:"schema_version"`
-	SampleID      string    `json:"sample_id"`
-	Kind          string    `json:"kind"`
-	Source        string    `json:"source"`
-	Scope         string    `json:"scope,omitempty"`
-	StartedAt     time.Time `json:"started_at"`
-	FinishedAt    time.Time `json:"finished_at"`
-	OffsetNS      int64     `json:"offset_ns"`
-	Object        *Object   `json:"object,omitempty"`
-	Encoding      string    `json:"content_encoding,omitempty"`
-	Content       string    `json:"content,omitempty"`
-	Complete      bool      `json:"complete"`
-	Code          string    `json:"error_code,omitempty"`
+	Baseline        bool      `json:"baseline,omitempty"`
+	Epoch           int64     `json:"epoch,omitempty"`
+	IntervalSeconds int64     `json:"interval_seconds,omitempty"`
+	Hostname        string    `json:"hostname,omitempty"`
+	Supported       *bool     `json:"supported,omitempty"`
+	RedactedFields  []string  `json:"redacted_fields,omitempty"`
+	BootID          string    `json:"boot_id,omitempty"`
+	SchemaVersion   int       `json:"schema_version"`
+	SampleID        string    `json:"sample_id"`
+	Kind            string    `json:"kind"`
+	Source          string    `json:"source"`
+	Scope           string    `json:"scope,omitempty"`
+	StartedAt       time.Time `json:"started_at"`
+	FinishedAt      time.Time `json:"finished_at"`
+	OffsetNS        int64     `json:"offset_ns"`
+	Object          *Object   `json:"object,omitempty"`
+	Encoding        string    `json:"content_encoding,omitempty"`
+	Content         string    `json:"content,omitempty"`
+	Complete        bool      `json:"complete"`
+	Code            string    `json:"error_code,omitempty"`
 }
 type Collector interface {
 	Collect(context.Context, func(Record) error) error

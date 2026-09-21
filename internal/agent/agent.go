@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ type Agent struct {
 	jobs           chan string
 	wg             sync.WaitGroup
 	once           sync.Once
+	bgCancel       context.CancelFunc
 	nextBackground time.Time // worker-owned fixed background schedule
 }
 
@@ -130,10 +132,14 @@ func (a *Agent) Submit(r Request) (Task, bool, error) {
 			return bad()
 		}
 	}
+	scenes, sceneErr := normalizeScenes(r.Scenes)
+	if sceneErr != nil {
+		return bad()
+	}
 	if id, ok := a.requests[r.RequestID]; ok {
 		t := a.tasks[id]
 		if !expired(t.TaskExpiresAt, time.Now()) {
-			if r.WindowSeconds != nil && *r.WindowSeconds != t.WindowSeconds || r.StepSeconds != nil && *r.StepSeconds != t.StepSeconds {
+			if r.WindowSeconds != nil && *r.WindowSeconds != t.WindowSeconds || r.StepSeconds != nil && *r.StepSeconds != t.StepSeconds || r.Scenes != nil && !slices.Equal(scenes, t.Scenes) || r.IncludeThreads != nil && *r.IncludeThreads != t.IncludeThreads {
 				return Task{}, false, apiError(409, "request_conflict", "request_id has different parameters")
 			}
 			return logical(t, time.Now()), true, nil
@@ -149,6 +155,9 @@ func (a *Agent) Submit(r Request) (Task, bool, error) {
 	if a.cfg.validateSampling(w, s) != nil {
 		return bad()
 	}
+	if col, ok := a.collector.(windowCollector); ok && col.Available() != nil {
+		return Task{}, false, apiError(503, "atop_unavailable", "atop 2.7.1 is unavailable")
+	}
 	if a.ctx.Err() != nil || a.degraded || (!a.roundDeadline.IsZero() && time.Now().After(a.roundDeadline)) {
 		return Task{}, false, apiError(503, "agent_unavailable", "agent recovery or collector unavailable")
 	}
@@ -159,6 +168,15 @@ func (a *Agent) Submit(r Request) (Task, bool, error) {
 		return Task{}, false, apiError(507, "storage_unavailable", "storage unavailable")
 	}
 	t := Task{TaskID: uuid(), RequestID: r.RequestID, State: "running", Phase: "sampling", WindowSeconds: int64(w / time.Second), StepSeconds: int64(s / time.Second), PlannedPoints: len(Schedule(w, s)), ReceivedAt: time.Now().UTC(), BackgroundEnabled: a.cfg.Background.Enabled, Errors: []ErrorCount{}}
+	t.Scenes = scenes
+	if r.IncludeThreads != nil {
+		t.IncludeThreads = *r.IncludeThreads
+	}
+	if _, ok := a.collector.(windowCollector); ok {
+		t.SchemaVersion = 2
+		t.Limitations = staticLimitations()
+		t.Capabilities = map[string]bool{}
+	}
 	t.Host = a.collector.Metadata()
 	if err := a.store.Mkdir("tasks/" + t.TaskID); err != nil {
 		return Task{}, false, apiError(507, "storage_unavailable", "storage unavailable")
@@ -170,6 +188,9 @@ func (a *Agent) Submit(r Request) (Task, bool, error) {
 	a.tasks[t.TaskID] = t
 	a.requests[t.RequestID] = t.TaskID
 	a.active = t.TaskID
+	if a.bgCancel != nil {
+		a.bgCancel()
+	}
 	a.jobs <- t.TaskID
 	return t.clone(), false, nil
 }
@@ -228,6 +249,10 @@ func (a *Agent) collect(step, window time.Duration, taskScoped bool, emit func(R
 	return err
 }
 func (a *Agent) run(id string) {
+	if col, ok := a.collector.(windowCollector); ok {
+		a.runWindow(id, col)
+		return
+	}
 	a.mu.Lock()
 	t := a.tasks[id].clone()
 	a.mu.Unlock()
@@ -445,6 +470,10 @@ func (a *Agent) waitPoint(deadline time.Time) (bool, bool) {
 }
 
 func (a *Agent) background(duringTask bool) {
+	if col, ok := a.collector.(windowCollector); ok {
+		a.backgroundWindow(col)
+		return
+	}
 	if !a.cfg.Background.Enabled || a.ctx.Err() != nil {
 		return
 	}
