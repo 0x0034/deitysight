@@ -389,7 +389,7 @@ func (a *Agent) run(id string) {
 func (a *Agent) recordError(t *Task, code string, offset time.Duration) error {
 	t.addError(code)
 	now := time.Now().UTC()
-	b, _ := jsonBytes(Record{SchemaVersion: 1, SampleID: uuid(), Kind: "error", Source: "agent", Code: code, StartedAt: now, FinishedAt: now, OffsetNS: int64(offset)})
+	b, _ := jsonBytes(Record{SchemaVersion: max(1, t.SchemaVersion), SampleID: uuid(), Kind: "error", Source: "agent", Code: code, StartedAt: now, FinishedAt: now, OffsetNS: int64(offset)})
 	return a.store.Append(taskPath(t.TaskID, "errors.jsonl"), b, true, false)
 }
 func (a *Agent) endTimes(t *Task) {
@@ -558,6 +558,9 @@ func (a *Agent) freezeHistory(t *Task) error {
 			return err
 		}
 		err = readRecords(f, 16<<20, func(r Record) error {
+			if t.SchemaVersion >= 2 && r.SchemaVersion != 2 {
+				return nil
+			}
 			b, e := jsonBytes(r)
 			if e != nil {
 				return e
@@ -585,6 +588,9 @@ func (a *Agent) freezeHistory(t *Task) error {
 		}
 	}
 	t.HistoryReason = "available_retained_history"
+	if t.SchemaVersion >= 2 {
+		t.HistoryReason = "retained_frames_with_session_gaps_background_preempted_for_task"
+	}
 	if t.HistoryRecords == 0 {
 		t.HistoryReason = "no_history_yet"
 	}

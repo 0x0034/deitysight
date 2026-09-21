@@ -56,18 +56,42 @@ func (a *Agent) coverage(base string, names []string) ([]sourceCoverage, error) 
 		if e != nil {
 			return nil, e
 		}
+		pending := map[string]*sourceCoverage{}
+		pendingID := ""
 		e = readRecords(f, 16<<20, func(r Record) error {
+			target := counts
+			if r.SchemaVersion == 2 {
+				if pendingID != r.SampleID {
+					pending = map[string]*sourceCoverage{}
+					pendingID = r.SampleID
+				}
+				target = pending
+			}
 			key := sourcePattern(r)
-			v := counts[key]
+			v := target[key]
 			if v == nil {
 				v = &sourceCoverage{Source: key}
-				counts[key] = v
+				target[key] = v
 			}
 			v.Records++
 			if r.Complete {
 				v.Complete++
 			} else {
 				v.Missing++
+			}
+			if r.SchemaVersion == 2 && r.Kind == "frame_end" && r.Complete {
+				for k, p := range pending {
+					c := counts[k]
+					if c == nil {
+						c = &sourceCoverage{Source: k}
+						counts[k] = c
+					}
+					c.Records += p.Records
+					c.Complete += p.Complete
+					c.Missing += p.Missing
+				}
+				pending = map[string]*sourceCoverage{}
+				pendingID = ""
 			}
 			return nil
 		})
@@ -308,7 +332,7 @@ func (a *Agent) repairAndFinish(t *Task) {
 		}
 	}
 	now := time.Now().UTC()
-	b, _ := jsonBytes(Record{SchemaVersion: 1, SampleID: uuid(), Kind: "error", Source: "agent", Code: "agent_interrupted", StartedAt: now, FinishedAt: now})
+	b, _ := jsonBytes(Record{SchemaVersion: max(1, t.SchemaVersion), SampleID: uuid(), Kind: "error", Source: "agent", Code: "agent_interrupted", StartedAt: now, FinishedAt: now})
 	if a.store.Append(taskPath(t.TaskID, "errors.jsonl"), b, false, false) != nil {
 		t.addError("storage_unavailable")
 	}
