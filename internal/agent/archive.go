@@ -336,19 +336,33 @@ func (a *Agent) repair(t *Task, name string) error {
 	scan.Buffer(make([]byte, 64<<10), int(6*(16<<20)+(64<<10)))
 	damaged := false
 	var sources, pendingSources int64
+	pendingID := ""
 	sampleIDs := map[string]bool{}
 	for scan.Scan() {
 		var r Record
 		if json.Unmarshal(scan.Bytes(), &r) != nil || (r.SchemaVersion != 1 && r.SchemaVersion != 2) {
 			damaged = true
+			if t.SchemaVersion >= 2 {
+				break
+			}
 			continue
 		}
 		if name == "samples.jsonl" {
 			if r.SchemaVersion == 2 {
 				if r.Kind == "source" {
+					if pendingID != "" && pendingID != r.SampleID {
+						damaged = true
+						break
+					}
+					pendingID = r.SampleID
 					pendingSources++
 				}
 				if r.Kind == "frame_end" {
+					if pendingSources == 0 || pendingID != r.SampleID || !r.Complete {
+						damaged = true
+						break
+					}
+					pendingID = ""
 					sources += pendingSources
 					pendingSources = 0
 					sampleIDs[r.SampleID] = true
