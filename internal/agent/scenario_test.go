@@ -191,3 +191,16 @@ func TestScenarioRedactionCannotBeMovedIntoName(t *testing.T) {
 	})
 	_ = err // rejecting ambiguous data is also safe
 }
+
+func TestPinnedAtopVersion(t *testing.T) {
+	for _, s := range []string{"Version: 2.7.1 - 2026/07/30 11:52:50", "version: 2.7.1\n"} {
+		if !supportedAtopVersion(s) {
+			t.Fatalf("valid pinned version rejected: %q", s)
+		}
+	}
+	for _, s := range []string{"Version: 2.7.10", "Version: 2.8.0", "Version: 2.7.1evil", ""} {
+		if supportedAtopVersion(s) {
+			t.Fatal("wrong version accepted")
+		}
+	}
+}
