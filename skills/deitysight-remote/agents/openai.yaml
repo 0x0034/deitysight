@@ -1,0 +1,4 @@
+interface:
+  display_name: "Deitysight 远程调查"
+  short_description: "通过 HTTP 调用 Deitysight，获取并校验 atop 归档和 S3 结果"
+  default_prompt: "使用 $deitysight-remote，根据我提供的 agent 地址、任务 ID 或结果链接完成远程采集、下载或 atop 证据分析。"
