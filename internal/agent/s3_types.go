@@ -120,11 +120,17 @@ func (s *S3Result) valid(t Task, agentID string) bool {
 	if s.Attempts < 0 || s.Size < 0 {
 		return false
 	}
+	if (s.State == "pending" || s.State == "uploading" || s.State == "retry_wait" || s.State == "uploaded") && s.Key == "" {
+		return false
+	}
 	if s.Key != "" {
 		if len(s.SHA256) != 64 || strings.IndexFunc(s.SHA256, func(r rune) bool { return !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') }) >= 0 {
 			return false
 		}
 		if s.Key != path.Join(s.Prefix, agentID, t.TaskID, s.SHA256+".tar.gz") {
+			return false
+		}
+		if s.Size != t.Result.Size || s.SHA256 != t.Result.SHA256 {
 			return false
 		}
 	}
