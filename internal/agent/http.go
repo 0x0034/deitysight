@@ -138,6 +138,7 @@ func (a *Agent) Handler() http.Handler {
 				status = 200
 			}
 			w.Header().Set("Location", "/v1/tasks/"+t.TaskID)
+			t = a.resultView(t)
 			writeJSON(w, status, struct {
 				Task
 				Reused bool `json:"reused"`

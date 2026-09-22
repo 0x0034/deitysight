@@ -18,11 +18,12 @@ type Request struct {
 	StepSeconds    *int64   `json:"step_seconds,omitempty"`
 }
 type Result struct {
-	Available bool   `json:"available"`
-	Expired   bool   `json:"expired"`
-	URL       string `json:"url,omitempty"`
-	SHA256    string `json:"sha256,omitempty"`
-	Size      int64  `json:"size,omitempty"`
+	S3        *S3Result `json:"s3,omitempty"`
+	Available bool      `json:"available"`
+	Expired   bool      `json:"expired"`
+	URL       string    `json:"url,omitempty"`
+	SHA256    string    `json:"sha256,omitempty"`
+	Size      int64     `json:"size,omitempty"`
 }
 type ErrorCount struct {
 	Code  string `json:"code"`
@@ -61,6 +62,7 @@ type Task struct {
 }
 
 func (t Task) clone() Task {
+	t.Result.S3 = t.Result.S3.clone()
 	t.Errors = append([]ErrorCount{}, t.Errors...)
 	t.Scenes = append([]string(nil), t.Scenes...)
 	t.Limitations = append([]string(nil), t.Limitations...)

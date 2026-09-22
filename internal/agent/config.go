@@ -19,6 +19,7 @@ type Config struct {
 	Background BackgroundConfig `yaml:"background"`
 	Sampling   SamplingConfig   `yaml:"sampling"`
 	Atop       AtopConfig       `yaml:"atop"`
+	S3         S3Config         `yaml:"s3"`
 }
 type HTTPConfig struct {
 	Listen string `yaml:"listen"`
@@ -65,6 +66,7 @@ func DefaultConfig() Config {
 		Background: BackgroundConfig{Step: 30 * time.Second, Retention: 10 * time.Minute},
 		Sampling:   SamplingConfig{DefaultWindow: 30 * time.Second, DefaultStep: 5 * time.Second, MaxWindow: 300 * time.Second, MinStep: time.Second, MaxPoints: 301, RoundTimeout: 2 * time.Second, MaxSourceBytes: 1 << 20},
 		Atop:       AtopConfig{Enabled: true, StartupGrace: 10 * time.Second, FinishGrace: 5 * time.Second, Mode: "parseable", Binary: "/usr/bin/atop", Interval: time.Second},
+		S3:         S3Config{Prefix: "deitysight", ForcePathStyle: true, PresignTTL: time.Hour, UploadTimeout: 2 * time.Minute, RetryInitial: 5 * time.Second, RetryMax: 5 * time.Minute},
 	}
 }
 func LoadConfig(path string) (Config, error) {
@@ -86,6 +88,11 @@ func LoadConfig(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.S3.Enabled {
+		if err := c.S3.validate(); err != nil {
+			return err
+		}
+	}
 	if c.HTTP.Token == "" || strings.Contains(c.HTTP.Token, "REPLACE_WITH") || strings.TrimSpace(c.HTTP.Token) != c.HTTP.Token || strings.ContainsAny(c.HTTP.Token, "\r\n") {
 		return errors.New("configure a nonempty deployment token")
 	}

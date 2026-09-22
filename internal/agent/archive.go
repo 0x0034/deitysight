@@ -272,6 +272,10 @@ func (a *Agent) recover() {
 			a.degraded = true
 			continue
 		}
+		if t.Result.S3 != nil && !t.Result.S3.valid(t, a.id) {
+			a.degraded = true
+			continue
+		}
 		a.tasks[id] = t
 		if expired(t.TaskExpiresAt, time.Now()) {
 			continue

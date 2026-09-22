@@ -35,9 +35,14 @@ type Agent struct {
 	once           sync.Once
 	bgCancel       context.CancelFunc
 	nextBackground time.Time // worker-owned fixed background schedule
+	remote         remoteStore
+	uploadWake     chan struct{}
 }
 
 func New(c Config, collector Collector) (*Agent, error) {
+	return newAgent(c, collector, nil)
+}
+func newAgent(c Config, collector Collector, remote remoteStore) (*Agent, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -50,6 +55,11 @@ func New(c Config, collector Collector) (*Agent, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &Agent{cfg: c, collector: collector, store: s, ctx: ctx, cancel: cancel, tasks: map[string]Task{}, requests: map[string]string{}, jobs: make(chan string, 1)}
+	a.uploadWake = make(chan struct{}, 1)
+	a.remote = remote
+	if a.remote == nil && c.S3.validate() == nil {
+		a.remote = newS3Client(c.S3, nil)
+	}
 	var identity struct {
 		AgentID string `json:"agent_id"`
 	}
@@ -73,6 +83,8 @@ func New(c Config, collector Collector) (*Agent, error) {
 	a.recover()
 	a.wg.Add(1)
 	go a.worker()
+	a.wg.Add(1)
+	go a.uploadWorker()
 	return a, nil
 }
 func (a *Agent) Close() {
@@ -80,6 +92,13 @@ func (a *Agent) Close() {
 }
 func taskPath(id, name string) string { return "tasks/" + id + "/" + name }
 func (a *Agent) persist(t Task) error {
+	t = t.clone()
+	if s := t.Result.S3; s != nil {
+		s.URL = ""
+		s.URLExpiresAt = nil
+		s.URLErrorCode = ""
+		s.Paused = false
+	}
 	b, e := jsonBytes(t)
 	if e != nil {
 		return e
@@ -95,6 +114,9 @@ func (a *Agent) publish(t Task) error {
 		a.paused = true
 		log.Print("task metadata persistence failed")
 	}
+	if err == nil && t.State != "running" {
+		a.wakeUploads()
+	}
 	return err
 }
 func expired(at *time.Time, now time.Time) bool { return at != nil && !now.Before(*at) }
@@ -108,8 +130,12 @@ func logical(t Task, now time.Time) Task {
 }
 func (a *Agent) Get(id string) (Task, error) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.getLocked(id)
+	t, e := a.getLocked(id)
+	a.mu.Unlock()
+	if e != nil {
+		return t, e
+	}
+	return a.resultView(t), nil
 }
 func (a *Agent) getLocked(id string) (Task, error) {
 	t, ok := a.tasks[id]
@@ -178,6 +204,9 @@ func (a *Agent) Submit(r Request) (Task, bool, error) {
 		t.Capabilities = map[string]bool{}
 	}
 	t.Host = a.collector.Metadata()
+	if a.cfg.S3.Enabled {
+		t.Result.S3 = &S3Result{S3Target: a.cfg.S3.target(), State: "waiting_result"}
+	}
 	if err := a.store.Mkdir("tasks/" + t.TaskID); err != nil {
 		return Task{}, false, apiError(507, "storage_unavailable", "storage unavailable")
 	}
@@ -414,6 +443,7 @@ func (a *Agent) finish(t *Task) {
 			t.State = "failed"
 		}
 	}
+	remote := t.Result.S3.clone()
 	if err := a.archive(t); err != nil {
 		t.Result.Available = false
 		t.addError("archive_failed")
@@ -422,6 +452,8 @@ func (a *Agent) finish(t *Task) {
 		}
 		log.Print("task archive unavailable")
 	}
+	t.Result.S3 = remote
+	a.prepareTransfer(t)
 	if err := a.publish(*t); err != nil {
 		a.mu.Lock()
 		v := a.tasks[t.TaskID]
