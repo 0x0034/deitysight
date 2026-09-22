@@ -35,6 +35,10 @@ atop:
 s3:
   # 默认关闭；启用后只为新 task 转存结果，已有归档不自动补传。
   enabled: false
+  # s3（默认）或 yos；YOS 完整示例见 yos.example.yaml 和 README.md。
+  provider: "s3"
+  # 仅 YOS 可以显式允许内部 HTTP 网关；标准 S3 始终要求 HTTPS。
+  allow_http: false
   endpoint: "https://s3.example.com"
   region: "us-east-1"
   bucket: "deitysight-results"

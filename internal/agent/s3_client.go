@@ -27,6 +27,24 @@ type s3Client struct {
 	multipartThreshold, partSize int64
 }
 
+func newRemoteStore(c S3Config) remoteStore {
+	if c.Provider == "yos" {
+		return newYOSClient(c, nil)
+	}
+	return newS3Client(c, nil)
+}
+
+func (c *s3Client) Check(ctx context.Context, o uploadObject) error {
+	r, err := c.Head(ctx, o.Key)
+	if err != nil {
+		return err
+	}
+	if !o.matches(r) {
+		return errObjectConflict
+	}
+	return nil
+}
+
 func newS3Client(c S3Config, client *http.Client) *s3Client {
 	if client == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -178,8 +196,16 @@ func remoteErrorCode(e error) string {
 		return "s3_integrity_mismatch"
 	}
 	var response *smithyhttp.ResponseError
+	var yosStatus yosStatusError
+	status := 0
 	if errors.As(e, &response) {
-		switch response.HTTPStatusCode() {
+		status = response.HTTPStatusCode()
+	}
+	if errors.As(e, &yosStatus) {
+		status = int(yosStatus)
+	}
+	if status != 0 {
+		switch status {
 		case 401, 403:
 			return "s3_access_denied"
 		case 404:
@@ -189,7 +215,7 @@ func remoteErrorCode(e error) string {
 		case 429:
 			return "s3_throttled"
 		}
-		if response.HTTPStatusCode() >= 500 {
+		if status >= 500 {
 			return "s3_service_unavailable"
 		}
 	}

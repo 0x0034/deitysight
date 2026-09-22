@@ -40,6 +40,8 @@ atop 探测只在启动执行一次，修复缺失、版本或权限后重启 ag
 
 S3 为可选功能，默认关闭。启用后，**新接收的 task** 在本地归档完成后异步上传；用户或中间 server 仍通过原 HTTP 接口提交和查询任务。
 
+`s3.provider` 省略或设为 `s3` 时使用下述标准 S3 协议。接入内部 YOS 时使用本文末尾的 [YOS 配置](#yos-结果转存)，状态和下载 API 仍使用 `result.s3`。
+
 ```yaml
 s3:
   enabled: true
@@ -60,6 +62,8 @@ s3:
 | 字段 | 默认值 | 约束与作用 |
 | --- | --- | --- |
 | s3.enabled | false | 是否接收新转存意图并运行上传；关闭后已有待办暂停，但本地截止时间不延长 |
+| s3.provider | s3 | s3 使用标准协议；yos 使用独立 YOS 适配。省略与显式 s3 保持旧任务目标身份一致 |
+| s3.allow_http | false | 仅 provider=yos 可设 true，以使用内部 HTTP 网关；不关闭 HTTPS 证书验证 |
 | s3.endpoint | 无 | 启用时必填 HTTPS 服务根地址；不接受用户信息、路径前缀、查询或片段；必须通过 TLS 证书校验 |
 | s3.region | 无 | 必填签名区域，按服务实际设置；示例 us-east-1 不是所有服务的正确值 |
 | s3.bucket | 无 | 预先创建的私有 bucket；启用时必填，遵循 3–63 字符 DNS 桶名规则 |
@@ -86,7 +90,7 @@ s3:
 | expired | 本地结果保留期已过，停止上传重试 |
 | unavailable | 没有归档，或本地文件缺失、完整性不匹配 |
 
-`paused: true` 表示开关关闭或当前 endpoint/region/bucket/prefix/寻址模式与该任务的原目标不匹配。恢复匹配配置并重启后可继续未到期待办；更换凭据不改变对象身份。已有归档不会自动批量补传，重复 request_id 也不会为旧任务追加上传意图。
+`paused: true` 表示开关关闭或当前 provider/allow_http/endpoint/region/bucket/prefix/寻址模式与该任务的原目标不匹配。恢复匹配配置并重启后可继续未到期待办；更换凭据不改变对象身份。已有归档不会自动批量补传，重复 request_id 也不会为旧任务追加上传意图。
 
 上传成功后本地仍默认保留 24 小时。到期仍未上传成功则停止重试并清理，可能失去唯一副本；保留期不会因为 S3 不可达而自动延长。上传成功的本地文件到期后，任务记录有效期内（默认 7 天）仍可查询新链接，原本地下载接口仍返回 410；任务记录过期后返回 404。关闭 S3 后仍可用匹配且完整的签名配置为已上传对象生成链接。
 
@@ -97,3 +101,19 @@ S3 对象由 bucket 生命周期管理，本地 TTL 不删除远端对象。`upl
 上传请求附带 checksum，并核验远端长度与自定义 SHA-256 元信息；S3 ETag 和 multipart composite checksum 均不作为完整文件 SHA-256。下载方可使用响应的 sha256 对实际下载字节重新校验。服务需兼容条件写入 `If-None-Match: *` 及所用 checksum/multipart API，不支持时显式失败，不静默放弃校验或覆盖保护。
 
 保持配置文件最小读取权限，放行到 endpoint 的 DNS/HTTPS；企业 CA 加入服务的可信证书环境，不能关闭证书验证。endpoint 也是签名链接使用的域名，不支持签名后替换域名或独立下载代理。实际服务联调信息和凭据不进入仓库。
+
+## YOS 结果转存
+
+用 [yos.example.yaml](yos.example.yaml) 替换 agent 配置的整个 `s3` 段。`provider: yos` 启用内部 YOS 协议：`bucket` 填分配的完整 `namespace/key`，`endpoint` 填网关根地址，`force_path_style` 必须为 true。YOS 直接使用分配路径路由，不调用 AWS SDK 签名；`region`、`access_key_id`、`secret_access_key`、`session_token` 必须为空或省略，避免误用标准 S3 凭据。此模式适用于已验证的内部 YOS 网关，不能作为其他 S3 服务的免鉴权方式。
+
+内部网关若只支持 HTTP，显式设置 `allow_http: true`；归档及网关签名响应会以明文经过这段内部网络，应仅部署在已信任的网络内。配置 HTTPS 时始终校验证书，不接受跳转，不会自动降级为 HTTP。
+
+YOS 对象 key 为 `<prefix>/<SHA256(agent_id + 换行 + task_id + 换行 + 归档SHA256)>.tar.gz`。归档摘要仍单独保存在任务响应中；文件名中的摘要是对象身份摘要，不能拿来校验归档内容。重试与重启使用同一个 key，不同任务和 agent 分开命名。保守限制完整 `bucket/key` 不超过 128 字节；各路径段仅允许英文字母、数字、`_`、`-` 和非开头的 `.`。prefix 可空；超长配置在启动时拒绝。
+
+上传前通过网关 GET（`cloud=cos`）核验已有对象。不存在则执行带 Content-Length 的单次 PUT；上传后再 GET 并流式计算完整 SHA-256 和长度，匹配后才记录 uploaded。不依赖 YOS 未返回的自定义元数据、HEAD、ETag 或未实现的条件 PUT；已有对象不匹配时返回 `s3_object_conflict`，不会主动覆盖。YOS 不保证原子 create-only 写入，因此检查和写入之间仍存在竞争窗口；必须保证其他写入者不使用 agent 的对象 key，不能将相同存储身份复制给并行实例。完整读回增加约一份归档大小的下载流量，上传和校验共享 upload_timeout 和本地 TTL；超时后仍按现有策略重试。
+
+单个归档上限为 **1,000,000,000 字节**，采用文档 1G 限制的保守十进制解释。超过上限时本地结果照常可用，转存状态为 unavailable，last_error_code 为 `yos_object_too_large`。YOS 不使用 multipart，不创建 bucket、不删除远端完成对象，远端保留由 YOS 管理方负责。
+
+查询 uploaded 任务时调用 YOS `?presign=true&cloud=cos&expire=<Unix秒>`，XML 解码后返回 COS 原始 HTTPS 链接。固定使用 COS；UFile 的 HTTP 链接不在当前支持范围内。响应必须指向预期对象及 COS 域名，过期时间必须与请求一致，允许签名起始时间最多 30 秒时钟偏差；查询签名有 10 秒超时、16 KiB 响应上限。URL 不落盘、不写日志；调用方直接下载 COS 链接并校验任务提供的归档摘要，不向云端发送 agent Bearer token。
+
+标准 S3 历史任务保持原对象名与目标；切换 YOS 不迁移或补传旧任务。YOS 的上传、重试、本地过期、目标变化和 URL 错误均沿用 `result.s3`，额外返回 `provider: yos`，HTTP 例外启用时返回 `allow_http: true`。接入与验证记录见 [YOS 验证](../docs/yos-validation.md)。

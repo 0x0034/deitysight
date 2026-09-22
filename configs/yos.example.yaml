@@ -1,0 +1,21 @@
+# 将本 s3 段替换到 agent.example.yaml；本文件是配置片段，不能独立启动 agent。
+# HTTP 网关仅用于已信任的内部网络；返回给调用方的是 COS HTTPS 下载链接。
+s3:
+  enabled: true
+  provider: "yos"
+  allow_http: true
+  endpoint: "http://yos.example.internal"
+  # 分配的 namespace/key 整体放在 bucket 中，例如 team/qa。
+  bucket: "team/qa"
+  prefix: "deitysight"
+  force_path_style: true
+  # YOS 使用分配路径路由；不使用 AWS 签名，以下字段必须留空或省略。
+  region: ""
+  access_key_id: ""
+  secret_access_key: ""
+  session_token: ""
+  presign_ttl: "1h"
+  # 包含上传和完整读回校验，按归档大小与实际带宽调整。
+  upload_timeout: "2m"
+  retry_initial: "5s"
+  retry_max: "5m"

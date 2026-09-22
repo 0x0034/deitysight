@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"math/rand/v2"
-	"path"
 	"time"
 )
 
@@ -31,12 +30,16 @@ func (a *Agent) prepareTransfer(t *Task) {
 		s.LastErrorCode = "local_result_unavailable"
 		return
 	}
-	s.Key = path.Join(s.Prefix, a.id, t.TaskID, t.Result.SHA256+".tar.gz")
+	s.Key = s.objectKey(a.id, t.TaskID, t.Result.SHA256)
 	s.SHA256 = t.Result.SHA256
 	s.Size = t.Result.Size
 	s.State = "pending"
 	s.LastErrorCode = ""
 	s.NextAttemptAt = nil
+	if s.Provider == "yos" && s.Size > yosMaxObjectSize {
+		s.State = "unavailable"
+		s.LastErrorCode = "yos_object_too_large"
+	}
 }
 func (a *Agent) resultView(t Task) Task {
 	t = t.clone()
@@ -72,7 +75,9 @@ func (a *Agent) resultView(t Task) Task {
 			return t
 		}
 		start := time.Now().UTC().Truncate(time.Second)
-		link, e := a.remote.Presign(a.ctx, s.Key, a.cfg.S3.PresignTTL)
+		ctx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
+		defer cancel()
+		link, e := a.remote.Presign(ctx, s.Key, a.cfg.S3.PresignTTL)
 		if e != nil {
 			s.URLErrorCode = "signing_failed"
 			return t
@@ -233,11 +238,7 @@ func (a *Agent) transfer(t Task) {
 		return
 	}
 	o := uploadObject{Key: s.Key, AgentID: a.id, TaskID: t.TaskID, SHA256: s.SHA256, Size: s.Size, UploadID: s.UploadID}
-	current, e := a.remote.Head(ctx, o.Key)
-	if e == nil && !o.matches(current) {
-		a.retryTransfer(t.TaskID, errObjectConflict)
-		return
-	}
+	e = a.remote.Check(ctx, o)
 	if e != nil && !errors.Is(e, errObjectMissing) {
 		a.retryTransfer(t.TaskID, e)
 		return
@@ -260,13 +261,12 @@ func (a *Agent) transfer(t Task) {
 			a.retryTransfer(t.TaskID, e)
 			return
 		}
-		current, e = a.remote.Head(ctx, o.Key)
+		e = a.remote.Check(ctx, o)
+		if errors.Is(e, errObjectConflict) {
+			e = errRemoteIntegrity
+		}
 		if e != nil {
 			a.retryTransfer(t.TaskID, e)
-			return
-		}
-		if !o.matches(current) {
-			a.retryTransfer(t.TaskID, errRemoteIntegrity)
 			return
 		}
 	}

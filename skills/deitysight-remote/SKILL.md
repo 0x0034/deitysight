@@ -1,6 +1,6 @@
 ---
 name: deitysight-remote
-description: 通过 Deitysight HTTP 接口发起主机采集、查询 task、取得本地或 S3 结果，并分析返回的 atop 证据。用于远程主机调查、已有任务进度与下载、预签名链接获取或归档分析；适用于无法 SSH 登录的主机。
+description: 通过 Deitysight HTTP 接口发起主机采集、查询 task、取得本地或 S3/YOS 结果，并分析返回的 atop 证据。用于远程主机调查、已有任务进度与下载、预签名链接获取或归档分析；适用于无法 SSH 登录的主机。
 ---
 
 # Deitysight 远程调用

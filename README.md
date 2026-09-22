@@ -69,6 +69,8 @@ curl --fail -H "Authorization: Bearer $DEITYSIGHT_TOKEN" \
 
 可选启用 **S3 结果转存**：配置 `s3.enabled: true` 及 HTTPS endpoint、region、bucket 和上传凭据后，新任务的最终归档会异步上传，任务查询的 `result.s3` 返回状态和默认 1 小时有效的预签名下载链接。采集状态与上传状态独立，本地下载继续可用；网络失败在本地结果保留期内自动重试，重启后恢复。旧任务不自动补传，远端对象由 bucket 生命周期管理。完整字段、权限及过期语义见 [S3 配置说明](configs/README.md#s3-结果转存)，测试证据见 [S3 验证](docs/s3-validation.md)。
 
+内部 YOS 使用 `s3.provider: yos`，将分配的 `namespace/key` 整体配置为 bucket。适配支持显式允许内部 HTTP 网关、单次流式上传与完整读回校验，并返回 COS HTTPS 下载链接；当前归档上限 1 GB，不使用 multipart。配置片段、额外流量和一致性边界见 [YOS 配置说明](configs/README.md#yos-结果转存)。
+
 设计依据见 [场景改造](docs/design/atop-scenario-refactor.md)，实测结果与限制见 [atop 验证](docs/atop-validation.md)。旧版技术设计和验证文件仅描述 schema v1。
 
 远程调用方可使用 [deitysight-remote skill](skills/deitysight-remote/SKILL.md)，其中包含 HTTP 调用、幂等重试、S3 链接获取和 atop 证据解释流程。将整个 `skills/deitysight-remote/` 目录复制到调用端的 skills 目录（例如 `~/.codex/skills/`）后，可通过 `$deitysight-remote` 使用；具体目标地址和凭据由调用者提供，skill 中不包含固定主机或真实秘密。

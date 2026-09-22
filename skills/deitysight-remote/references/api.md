@@ -122,6 +122,8 @@ task.state 的 running 可能处于 sampling 或 packaging；completed、partial
 
 S3 由 agent 配置决定，调用方不需要 access_key_id/secret_access_key。`result.s3` 缺失表示该任务没有转存记录或部署尚不支持该字段，不要假设会自动补传旧任务。
 
+`result.s3.provider: yos` 表示使用内部 YOS，沿用同一状态和下载流程；provider 缺失时是标准 S3。YOS 的 bucket 可能是含斜线的 namespace/key，返回的 url 是 COS HTTPS 直链，按原值下载即可。`allow_http: true` 只描述 agent 到内部网关的配置；下载方仍验证返回链接的 HTTPS 证书。对象 key 是不透明标识，YOS 文件名中的摘要不能替代 result.sha256。`yos_object_too_large` 表示归档超出 YOS 单包限制，此次转存 unavailable，可在本地结果有效期内下载原归档。
+
 | result.s3 | 含义与行为 |
 | --- | --- |
 | state=waiting_result | 等待本地最终归档 |

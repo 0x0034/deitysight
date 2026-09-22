@@ -58,7 +58,7 @@ func newAgent(c Config, collector Collector, remote remoteStore) (*Agent, error)
 	a.uploadWake = make(chan struct{}, 1)
 	a.remote = remote
 	if a.remote == nil && c.S3.validate() == nil {
-		a.remote = newS3Client(c.S3, nil)
+		a.remote = newRemoteStore(c.S3)
 	}
 	var identity struct {
 		AgentID string `json:"agent_id"`

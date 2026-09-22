@@ -42,6 +42,16 @@ func (f *fakeRemote) Head(ctx context.Context, key string) (remoteObject, error)
 	}
 	return v, nil
 }
+func (f *fakeRemote) Check(ctx context.Context, o uploadObject) error {
+	r, err := f.Head(ctx, o.Key)
+	if err != nil {
+		return err
+	}
+	if !o.matches(r) {
+		return errObjectConflict
+	}
+	return nil
+}
 func (f *fakeRemote) Put(ctx context.Context, o uploadObject, file *os.File, checkpoint func(string) error) error {
 	if f.entered != nil {
 		f.once.Do(func() { close(f.entered) })
