@@ -32,3 +32,20 @@ atop:
   binary: "/usr/bin/atop"
   startup_grace: "10s"
   finish_grace: "5s"
+s3:
+  # 默认关闭；启用后只为新 task 转存结果，已有归档不自动补传。
+  enabled: false
+  endpoint: "https://s3.example.com"
+  region: "us-east-1"
+  bucket: "deitysight-results"
+  prefix: "deitysight"
+  # S3 兼容服务通常使用 path-style；AWS 可按需要设为 false。
+  force_path_style: true
+  access_key_id: "REPLACE_WITH_ACCESS_KEY_ID"
+  secret_access_key: "REPLACE_WITH_SECRET_ACCESS_KEY"
+  session_token: ""
+  # 仅在查询 task 时签发链接；URL 不持久化、不写入日志。
+  presign_ttl: "1h"
+  upload_timeout: "2m"
+  retry_initial: "5s"
+  retry_max: "5m"

@@ -35,3 +35,65 @@
 atop 探测只在启动执行一次，修复缺失、版本或权限后重启 agent。只支持官方 atop 2.7.1，设置 `ATOPACCT=''` 关闭会计，不执行 shell、不接受额外命令参数。命令行在写入任何文件前移除；不保存 stderr。
 
 升级步骤：停止旧服务，安装已固定版本的 atop 和新 agent，调整配置和存储目录权限，更新服务单元，再启动。不要直接以 root 运行新 agent。服务共享 1 CPU、1 GiB 内存上限，磁盘默认 1 GiB；该预算需要按实际进程/线程规模校准。
+
+## S3 结果转存
+
+S3 为可选功能，默认关闭。启用后，**新接收的 task** 在本地归档完成后异步上传；用户或中间 server 仍通过原 HTTP 接口提交和查询任务。
+
+```yaml
+s3:
+  enabled: true
+  endpoint: "https://s3.example.com"
+  region: "us-east-1"
+  bucket: "deitysight-results"
+  prefix: "deitysight"
+  force_path_style: true
+  access_key_id: "REPLACE_WITH_ACCESS_KEY_ID"
+  secret_access_key: "REPLACE_WITH_SECRET_ACCESS_KEY"
+  session_token: ""
+  presign_ttl: "1h"
+  upload_timeout: "2m"
+  retry_initial: "5s"
+  retry_max: "5m"
+```
+
+| 字段 | 默认值 | 约束与作用 |
+| --- | --- | --- |
+| s3.enabled | false | 是否接收新转存意图并运行上传；关闭后已有待办暂停，但本地截止时间不延长 |
+| s3.endpoint | 无 | 启用时必填 HTTPS 服务根地址；不接受用户信息、路径前缀、查询或片段；必须通过 TLS 证书校验 |
+| s3.region | 无 | 必填签名区域，按服务实际设置；示例 us-east-1 不是所有服务的正确值 |
+| s3.bucket | 无 | 预先创建的私有 bucket；启用时必填，遵循 3–63 字符 DNS 桶名规则 |
+| s3.prefix | deitysight | 对象前缀，可空；不接受绝对路径、父目录穿越、重复分隔符、控制字符，最多 512 字节 |
+| s3.force_path_style | true | true 使用 endpoint/bucket/key；false 使用 bucket.endpoint/key |
+| s3.access_key_id | 无 | 显式配置的上传/签名身份；不会自动读取其他 AWS 凭据来源 |
+| s3.secret_access_key | 无 | 启用时必填，不接受占位符或控制字符；不写入结果、响应或日志 |
+| s3.session_token | 空 | 可选临时凭据 token；链接可能因凭据提前到期而早于 URL 标注时间失效 |
+| s3.presign_ttl | 1h | 正整数秒，最多 7 天；GET task 时签发新链接，实际有效期还受凭据/桶策略影响 |
+| s3.upload_timeout | 2m | 单次尝试预算，必须为正；还受本地结果剩余保留时间约束 |
+| s3.retry_initial | 5s | 初始退避间隔，必须为正 |
+| s3.retry_max | 5m | 最大退避间隔，不小于 retry_initial；加入抖动避免同时重试 |
+
+上传对象为原有最终 `tar.gz`，包含 partial/interrupted 结果和可下载的 failed 错误证据包。对象名为 `<prefix>/<agent_id>/<task_id>/<归档SHA-256>.tar.gz`，重试沿用该 key。启用版本控制的 bucket 仍可能保留重复写入的版本，需自行设置生命周期。
+
+单独的 worker 以单并发上传，超过 64 MiB 使用顺序 multipart（默认 8 MiB 分片，较大文件自动调整），不将整包放入内存。上传过程中本地文件持有租约、始终计入存储预算。认证失败或网络故障不改变 task 的采集结局，查询 `result.s3` 获取实际转存状态。
+
+| result.s3.state | 含义 |
+| --- | --- |
+| waiting_result | 等待 task 完成本地归档 |
+| pending / uploading | 等待上传 / 正在上传及核验 |
+| retry_wait | 等待 next_attempt_at，last_error_code 给出脱敏原因 |
+| uploaded | 已上传并提交成功记录，可生成 url 与 url_expires_at |
+| expired | 本地结果保留期已过，停止上传重试 |
+| unavailable | 没有归档，或本地文件缺失、完整性不匹配 |
+
+`paused: true` 表示开关关闭或当前 endpoint/region/bucket/prefix/寻址模式与该任务的原目标不匹配。恢复匹配配置并重启后可继续未到期待办；更换凭据不改变对象身份。已有归档不会自动批量补传，重复 request_id 也不会为旧任务追加上传意图。
+
+上传成功后本地仍默认保留 24 小时。到期仍未上传成功则停止重试并清理，可能失去唯一副本；保留期不会因为 S3 不可达而自动延长。上传成功的本地文件到期后，任务记录有效期内（默认 7 天）仍可查询新链接，原本地下载接口仍返回 410；任务记录过期后返回 404。关闭 S3 后仍可用匹配且完整的签名配置为已上传对象生成链接。
+
+S3 对象由 bucket 生命周期管理，本地 TTL 不删除远端对象。`uploaded` 是曾经成功上传的记录，不保证对象未被外部删除。预签名 URL 只在 API 响应中生成，不保存在 task.json、归档或日志中；签名失败会省略 URL 并提供 url_error_code。
+
+需要目标前缀的 PutObject/GetObject（包括 HEAD 和预签名下载）权限，以及 multipart 的上传、中止和 ListMultipartUploadParts 权限。不需要 DeleteObject。HEAD 在缺少 ListBucket 时可能以 403 表示对象不存在，agent 会将其作为权限错误处理；按部署环境授予适当的受限 ListBucket 可明确区分不存在对象。开启桶的 AbortIncompleteMultipartUpload 生命周期清理，以兜底进程崩溃后遗留的分片；该规则不等同于已完成对象的保留规则。
+
+上传请求附带 checksum，并核验远端长度与自定义 SHA-256 元信息；S3 ETag 和 multipart composite checksum 均不作为完整文件 SHA-256。下载方可使用响应的 sha256 对实际下载字节重新校验。服务需兼容条件写入 `If-None-Match: *` 及所用 checksum/multipart API，不支持时显式失败，不静默放弃校验或覆盖保护。
+
+保持配置文件最小读取权限，放行到 endpoint 的 DNS/HTTPS；企业 CA 加入服务的可信证书环境，不能关闭证书验证。endpoint 也是签名链接使用的域名，不支持签名后替换域名或独立下载代理。实际服务联调信息和凭据不进入仓库。

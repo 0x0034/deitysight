@@ -57,4 +57,6 @@ curl --fail -H "Authorization: Bearer $DEITYSIGHT_TOKEN" \
 
 后台默认关闭；开启后以默认 30s 步长保留 10m 证据。按需任务取消后台会话并冻结完整历史帧，结束后重开后台会话。历史有会话和任务造成的空隙，`history_reason`、基线和时间戳明确其非连续性，不承诺全窗口覆盖。
 
+可选启用 **S3 结果转存**：配置 `s3.enabled: true` 及 HTTPS endpoint、region、bucket 和上传凭据后，新任务的最终归档会异步上传，任务查询的 `result.s3` 返回状态和默认 1 小时有效的预签名下载链接。采集状态与上传状态独立，本地下载继续可用；网络失败在本地结果保留期内自动重试，重启后恢复。旧任务不自动补传，远端对象由 bucket 生命周期管理。完整字段、权限及过期语义见 [S3 配置说明](configs/README.md#s3-结果转存)，测试证据见 [S3 验证](docs/s3-validation.md)。
+
 设计依据见 [场景改造](docs/design/atop-scenario-refactor.md)，实测结果与限制见 [atop 验证](docs/atop-validation.md)。旧版技术设计和验证文件仅描述 schema v1。
