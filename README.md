@@ -6,6 +6,16 @@ Linux 主机调查证据采集 agent，**强依赖 atop 2.7.1**。CPU、IO、内
 make verify
 ```
 
+`make build` 通过 `-ldflags -X` 注入 `git describe --tags --always --dirty` 的版本描述；没有 Git 信息时使用 `dev`。发布构建可显式指定版本：
+
+```sh
+make build VERSION=v1.1.0
+# 直接使用 Go 构建时：
+go build -ldflags "-X github.com/0x0034/deitysight/internal/agent.Version=v1.1.0" -o dist/deitysight ./cmd/deitysight
+```
+
+直接构建且未注入时版本为 `dev`；运行 `deitysight -version` 查看二进制版本。
+
 部署使用专用非 root `deitysight` 账号。该 UID 只能运行 agent 和采集子进程，不能复用于业务进程。安装固定版本 atop 的普通可执行文件（不设置 setuid、不启用会计或探针），并确认 `atop -V` 为 2.7.1。不同版本不会自动兼容。
 
 ```sh

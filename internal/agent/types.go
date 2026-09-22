@@ -8,7 +8,8 @@ import (
 	"time"
 )
 
-const Version = "1.0.2"
+// Version is set at build time with -ldflags "-X github.com/0x0034/deitysight/internal/agent.Version=...".
+var Version = "dev"
 
 type Request struct {
 	Scenes         []string `json:"scenes,omitempty"`
