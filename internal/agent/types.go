@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const Version = "2.0.0"
+const Version = "1.0.2"
 
 type Request struct {
 	Scenes         []string `json:"scenes,omitempty"`
